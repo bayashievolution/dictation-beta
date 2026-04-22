@@ -37,36 +37,103 @@ function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * - 応答が空（finishReason付き）も throw（呼び出し側でneeds-retry化）
  */
 /**
- * モデルの「思考モード」内部推論が出力に混入した場合に剥がすサニタイザ。
- * Gemini 2.5 Flash は thinking_budget:0 で通常は抑制できるが、
- * まれに思考トークンがテキスト側に漏れることがあるので後処理で保険をかける。
+ * モデル由来の汚染（思考モード漏れ・繰り返しハルシネーション・メタテキスト）を
+ * 出力テキストから剥がすサニタイザ。
+ *
+ * 対処する既知パターン:
+ *  - 【思考開始】...【思考終了】 ブロック
+ *  - 【思考開始】のみで終了マーカーなし（ハルシネーションで壊れた応答）
+ *  - 「音声内容の確認:」「詳細な確認と整形:」等のメタ見出し
+ *  - 「- 「xxx」 -> 「yyy」」形式の思考的箇条書き
+ *  - 「最終的な整形案:」マーカー（以降を採用）
+ *  - 「のののの…」「を、からしに、を、からしに…」等の繰り返しループ
  */
 function _stripThinkingArtifacts(text) {
   if (!text) return text;
   let t = text;
-  // 【思考開始】〜【思考終了】ブロック、または「最終的な整形案:」見出し以降を残す
-  if (/【思考/.test(t)) {
-    // 「最終的な」「整形案」「出力」等の最終回答マーカー以降を取り出す
-    const finalMarker = /(?:最終(?:的な?)?(?:整形案|出力|回答|結果)|【出力】|【回答】)[:：]?\s*\n?/i;
-    const m = t.search(finalMarker);
-    if (m >= 0) {
-      // マーカーの次の行から取る
-      t = t.slice(m).replace(finalMarker, '').trim();
-    }
-    // それでも 思考ブロックが残っていたら削除
-    t = t.replace(/【思考(?:開始|終了|ここまで)?】[\s\S]*?【思考(?:終了|ここまで|終わり)】/g, '').trim();
-    t = t.replace(/^【思考[^】]*】[\s\S]*$/m, '').trim();
+  const originalLen = t.length;
+  const events = [];
+
+  // 1. 【思考開始】〜【思考終了】 ブロック削除
+  const thinkBlockRe = /【思考[^】]*】[\s\S]*?【思考[^】]*(?:終了|終わり|ここまで|end)[^】]*】\s*:?／?/g;
+  if (thinkBlockRe.test(t)) {
+    t = t.replace(thinkBlockRe, '');
+    events.push('思考ブロック除去');
   }
-  // 冒頭「これで」「確認」「問題なさそう」等の思考的締めが残っていたら落とす
-  t = t.replace(/\n?(?:これでルールに沿っているか確認[\s\S]*|問題なさそう。?)$/g, '').trim();
+
+  // 2. 「最終的な整形案」マーカーがあればそれ以降を本文採用、手前は原則破棄
+  const finalRe = /(?:最終(?:的な?)?(?:整形案|出力|回答|結果|テキスト)|【出力】|【回答】|【整形結果】)\s*[:：]?\s*\n?/;
+  const fm = t.match(finalRe);
+  if (fm) {
+    const idx = t.indexOf(fm[0]);
+    const before = t.slice(0, idx).trim();
+    const after  = t.slice(idx + fm[0].length).trim();
+    // 手前が思考メタのみなら捨てる、そうでなければ連結
+    if (/音声内容の確認|詳細な確認|これで.*(?:ルール|問題)|問題なさそう/.test(before) || before.length < 40) {
+      t = after;
+    } else {
+      t = before + '\n' + after;
+    }
+    events.push('最終マーカー採用');
+  }
+
+  // 3. 【思考開始】だけあって終了マーカーがない場合 → 開始以降を切り捨て
+  if (/【思考/.test(t)) {
+    t = t.replace(/【思考[^】]*】[\s\S]*$/, '').trim();
+    events.push('思考開始以降を切り捨て');
+  }
+
+  // 4. メタ見出し行（「音声内容の確認:」等）を削除
+  const metaHeadRe = /^\s*(?:音声内容の確認|詳細な確認と整形|これで(?:ルール|問題)[^\n]*(?:確認|問題)|問題なさそう。?|ルールを適用して整形する。?|最終的な整形案)\s*[:：]?\s*$/gm;
+  if (metaHeadRe.test(t)) {
+    t = t.replace(metaHeadRe, '');
+    events.push('メタ見出し除去');
+  }
+
+  // 5. 思考の箇条書き "- 「xxx」 -> 「yyy」" を削除
+  const bulletRe = /^\s*-\s*「[^」]*」\s*(?:->|→)\s*「[^」]*」\s*$/gm;
+  if (bulletRe.test(t)) {
+    t = t.replace(bulletRe, '');
+    events.push('思考箇条書き除去');
+  }
+
+  // 6. 繰り返しハルシネーション検出: 1〜20文字の短句が15回以上連続
+  //    「のののの...」「を、からしに、を、からしに...」「ああああ...」等
+  const repeatRe = /(.{1,20}?)\1{14,}/g;
+  const repeatMatches = t.match(repeatRe);
+  if (repeatMatches) {
+    t = t.replace(repeatRe, (m, p1) => {
+      const sample = p1.replace(/\s+/g, '').slice(0, 12);
+      return `\n…[モデルが「${sample}」を繰り返して出力破綻。区間省略]…\n`;
+    });
+    events.push(`繰り返し検出×${repeatMatches.length}`);
+  }
+
+  // 7. 連続改行の圧縮
+  t = t.replace(/\n{3,}/g, '\n\n');
+  t = t.trim();
+
+  // 8. 健全性: サニタイズで大きく削られた/ほぼ空になった場合は診断ログで通知
+  if (window.diagLog && (events.length > 0 || Math.abs(t.length - originalLen) > 100)) {
+    window.diagLog.info(`Gemini出力クリーニング: ${events.join(', ')} (${originalLen}→${t.length}字)`);
+  }
+
+  // 空になったら空文字を返す → 呼び出し側でneeds-retry扱い
+  if (t.length < 3) return '';
+  // 繰り返し検出「省略」マーカーしか残らなかった場合も空扱い
+  if (/^(?:…\[[^\]]*\]…\s*)+$/.test(t)) return '';
   return t;
 }
 
 async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } = {}) {
-  // 思考モードの出力混入を防ぐため、明示的に無効化（呼び出し側で上書きされない限り）
+  // 思考モードの出力混入を防ぐため、明示的に無効化。
+  // thinkingBudget:0 だけだとまれに漏れるので includeThoughts:false も併用。
   if (!body.generationConfig) body.generationConfig = {};
   if (body.generationConfig.thinkingConfig === undefined) {
-    body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    body.generationConfig.thinkingConfig = {
+      thinkingBudget: 0,
+      includeThoughts: false,
+    };
   }
   const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
   let lastErr;
