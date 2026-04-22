@@ -3558,6 +3558,27 @@ function closeOnboarding() {
 }
 const btnOnboarding = document.getElementById('btn-onboarding');
 if (btnOnboarding) btnOnboarding.addEventListener('click', startOnboarding);
+
+/* ライブ字幕（OSD）ウィンドウを開く。
+ * Chrome拡張の場合は chrome-extension://ID/captions.html、
+ * 一般Webの場合は相対パス captions.html で開く。 */
+const btnCaptions = document.getElementById('btn-captions');
+if (btnCaptions) {
+  btnCaptions.addEventListener('click', () => {
+    // 現在のセッションを先に保存しておかないと字幕側が古いまま表示
+    snapshotActiveToSession();
+    persistSessions();
+    const url = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+      ? chrome.runtime.getURL('captions.html')
+      : 'captions.html';
+    // 別ウィンドウとして開く。ユーザーが手動で別モニタに移動できるよう、通常タブ扱い
+    const w = window.open(url, 'dictation-captions',
+      'popup=yes,width=960,height=540,resizable=yes,scrollbars=yes');
+    if (!w) {
+      alert('ポップアップがブロックされました。ブラウザのポップアップ許可を確認してください。');
+    }
+  });
+}
 document.getElementById('onboarding-next-btn')?.addEventListener('click', nextOnboarding);
 document.querySelector('#onboarding .onboarding-skip')?.addEventListener('click', closeOnboarding);
 document.querySelector('#onboarding .onboarding-overlay')?.addEventListener('click', closeOnboarding);
