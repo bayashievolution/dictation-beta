@@ -3354,11 +3354,71 @@ function startAutoSave() {
 els.btnToggle.addEventListener('click', () => state.isRecording ? stopRecording() : startRecording());
 els.btnCopyAllPlain.addEventListener('click', copyAllPlain);
 els.btnCopyAllMd.addEventListener('click', copyAllMultiformat);
-els.btnSaveJson.addEventListener('click', (e) => {
-  // Shift+クリック: 全セッションを1つのHTML（各タブ展開可）
-  // 通常クリック: アクティブなセッションだけ
-  if (e.shiftKey) saveAllSessionsAsHtml();
-  else saveSessionAsHtml();
+/**
+ * クリック＋長押し（タッチ対応）両対応のハンドラを要素に取り付ける。
+ * 用途: 保存ボタンの「通常=単体 / Shift+クリック or 長押し=全件」のように
+ *       同じUIで主/副アクションを切り替えたいとき。
+ *
+ * 挙動:
+ * - デスクトップ: 通常クリック → onClick、Shift+クリック → onLongPress
+ * - タッチ / マウス長押し (〜600ms): onLongPress（触覚フィードバック付き）
+ * - ドラッグで10px以上動いたら長押しキャンセル
+ * - キーボード(Enter) からのクリックは onClick として扱う
+ */
+function attachLongPressClick(el, { onClick, onLongPress, threshold = 600, moveTolerance = 10 } = {}) {
+  let longFired = false;
+  let longTimer = null;
+  let downX = 0, downY = 0;
+
+  const cancelLong = () => {
+    if (longTimer) { clearTimeout(longTimer); longTimer = null; }
+  };
+
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return; // 左クリック/主ボタンのみ
+    longFired = false;
+    downX = e.clientX; downY = e.clientY;
+    cancelLong();
+    longTimer = setTimeout(() => {
+      longTimer = null;
+      longFired = true;
+      // 触覚フィードバック（モバイル Chrome 等）
+      try { navigator.vibrate && navigator.vibrate(30); } catch {}
+      onLongPress && onLongPress(e);
+    }, threshold);
+  });
+
+  el.addEventListener('pointermove', (e) => {
+    if (!longTimer) return;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > moveTolerance) {
+      cancelLong();
+    }
+  });
+  el.addEventListener('pointerup', cancelLong);
+  el.addEventListener('pointercancel', cancelLong);
+  el.addEventListener('pointerleave', cancelLong);
+
+  el.addEventListener('click', (e) => {
+    // 長押しが既に発火していたら、後続のclickは抑止（二重実行防止）
+    if (longFired) {
+      longFired = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Shift+クリック = 長押しと等価（デスクトップ用ショートカット）
+    if (e.shiftKey) {
+      onLongPress && onLongPress(e);
+      return;
+    }
+    onClick && onClick(e);
+  });
+}
+
+// 保存ボタン: 通常=単体セッション、長押し/Shift=全セッション
+attachLongPressClick(els.btnSaveJson, {
+  onClick: saveSessionAsHtml,
+  onLongPress: saveAllSessionsAsHtml,
 });
 els.btnLoadJson.addEventListener('click', () => els.fileLoad.click());
 els.fileLoad.addEventListener('change', (e) => {
