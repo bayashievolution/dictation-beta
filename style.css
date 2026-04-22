@@ -2356,6 +2356,62 @@ html, body {
   color: var(--heading);
 }
 
+/* ───────── 診断ログビューア ───────── */
+.diag-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.diag-log-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.diag-log-viewer {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, 'Source Code Pro', monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diag-log-viewer:empty::before {
+  content: '（ログなし。整形失敗や通信エラーが起きると自動で記録されます）';
+  color: var(--text-faint);
+  font-style: italic;
+  font-family: inherit;
+}
+.diag-log-line {
+  display: block;
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.diag-log-line:last-child { border-bottom: none; }
+.diag-log-line .diag-ts {
+  color: var(--text-faint);
+  margin-right: 6px;
+}
+.diag-log-line .diag-level {
+  display: inline-block;
+  min-width: 38px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  margin-right: 6px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.diag-log-line.warn .diag-level { background: rgba(212, 162, 86, 0.2); color: #d4a256; }
+.diag-log-line.error .diag-level { background: rgba(248, 113, 113, 0.2); color: var(--danger); }
+
 
 /* ───────── Zoom bar (Word-style, bottom-right) ───────── */
 #zoom-bar {

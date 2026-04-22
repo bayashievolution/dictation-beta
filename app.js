@@ -758,12 +758,15 @@ function stopRecording() {
   setStatus('idle', '停止');
   setRecordingUI(false);
   clearAllTimers();
+  // 録音停止時のセッションIDを固定。非同期中にタブを切替えても
+  // 要約とタイトルは必ず「録音していたセッション」に書き込まれる
+  const snapshotSessionId = state.activeId;
   flushPendingToGemini().finally(async () => {
     snapshotActiveToSession();
     persistSessions();
     if (state.settings.autoSummarize && state.settings.aiEnabled && state.settings.apiKey) {
-      await generateSummary({ silent: true });
-      await autoGenerateTitle();
+      await generateSummary({ silent: true, sessionId: snapshotSessionId });
+      await autoGenerateTitle({ sessionId: snapshotSessionId });
     }
   });
 }
@@ -1738,8 +1741,21 @@ function formatDatePart(ts) {
   return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-async function autoGenerateTitle({ silent = true, force = false } = {}) {
-  const session = getActiveSession();
+/**
+ * セッションの transcript/summary HTML からプレーンテキストを取り出す
+ * （アクティブセッションは DOM から、それ以外はストアされた HTML から）
+ */
+function htmlToPlain(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return (tmp.innerText || tmp.textContent || '').trim();
+}
+
+async function autoGenerateTitle({ silent = true, force = false, sessionId = null } = {}) {
+  // 対象セッションをIDで固定（非同期中に activeId が変わっても誤適用しない）
+  const targetId = sessionId || state.activeId;
+  let session = state.sessions.find(s => s.id === targetId);
   if (!session) return;
   if (!force && session.titleIsManual) return;
   if (!state.settings.apiKey) {
@@ -1748,8 +1764,13 @@ async function autoGenerateTitle({ silent = true, force = false } = {}) {
   }
   // auto（録音停止時等）は aiEnabled に従う。手動再生成（force）は常に実行。
   if (!force && !state.settings.aiEnabled) return;
-  const transcript = getConfirmedText();
-  const summary = getSummaryText();
+  // 対象セッションが現在表示中ならDOMから、そうでなければストアHTMLから読む
+  const transcript = (targetId === state.activeId)
+    ? getConfirmedText()
+    : htmlToPlain(session.transcript);
+  const summary = (targetId === state.activeId)
+    ? getSummaryText()
+    : htmlToPlain(session.summary);
   if (!transcript && !summary) {
     if (!silent) alert('タイトル生成の素材がありません（文字起こし・要約が空）');
     return;
@@ -1764,12 +1785,17 @@ async function autoGenerateTitle({ silent = true, force = false } = {}) {
       if (!silent) alert('タイトルが空で返ってきました');
       return;
     }
+    // 非同期から戻ってきた時点でセッションがまだ存在するか再確認
+    session = state.sessions.find(s => s.id === targetId);
+    if (!session) return;
     session.aiTitle = aiTitle;
     session.title = `${aiTitle}(${formatDatePart(session.createdAt)})`;
     session.titleIsManual = false;
     session.updatedAt = Date.now();
     persistSessions();
     renderTabs();
+    // 表示中ならタイトルバーも更新
+    if (targetId === state.activeId) renderTitleBar();
   } catch (e) {
     console.warn('auto title failed:', e);
     if (!silent) alert('タイトル生成に失敗しました: ' + (e.message || String(e)));
@@ -1778,9 +1804,15 @@ async function autoGenerateTitle({ silent = true, force = false } = {}) {
 
 /* ───────── Summary generation ───────── */
 
-async function generateSummary({ silent = false } = {}) {
+async function generateSummary({ silent = false, sessionId = null } = {}) {
   if (state.isSummarizing) return;
-  const transcript = getConfirmedText();
+  // 対象セッションをIDで固定（非同期中にタブ切替されても安全に）
+  const targetId = sessionId || state.activeId;
+  let session = state.sessions.find(s => s.id === targetId);
+  if (!session) return;
+  const transcript = (targetId === state.activeId)
+    ? getConfirmedText()
+    : htmlToPlain(session.transcript);
   if (!transcript) {
     if (!silent) alert('文字起こしが空です。要約を生成できません。');
     return;
@@ -1790,33 +1822,50 @@ async function generateSummary({ silent = false } = {}) {
     return;
   }
   state.isSummarizing = true;
-  els.summary.classList.add('generating');
-  els.summaryEmpty.hidden = true;
-  if (els.btnSummaryCombo) els.btnSummaryCombo.classList.add('firing');
+  // 表示中のセッションだった場合のみ UI にローディング表示
+  const wasActive = (targetId === state.activeId);
+  if (wasActive) {
+    els.summary.classList.add('generating');
+    els.summaryEmpty.hidden = true;
+    if (els.btnSummaryCombo) els.btnSummaryCombo.classList.add('firing');
+  }
   setStatus('listening', '要約生成中');
   try {
-    const session = getActiveSession();
     const summary = await summarizeWithGemini({
       apiKey: state.settings.apiKey,
       transcript,
       title: session?.title,
       detail: state.settings.summaryDetail || 'medium',
     });
-    els.summary.innerHTML = renderMarkdown(summary);
-    snapshotActiveToSession();
+    // 非同期戻り後にセッションが生きているか再確認
+    session = state.sessions.find(s => s.id === targetId);
+    if (!session) return;
+    const summaryHtml = renderMarkdown(summary);
+    // セッションデータに直接書く（DOMは現在のactiveIdのものなので使わない）
+    session.summary = summaryHtml;
+    session.updatedAt = Date.now();
     persistSessions();
-    updateActionButtons();
-    if (!silent) {
-      switchInnerPane('pane-summary');
-      autoGenerateTitle();
+    // 対象セッションが今も表示中ならDOMにも反映
+    if (targetId === state.activeId) {
+      els.summary.innerHTML = summaryHtml;
+      els.summaryEmpty.hidden = true;
+      updateActionButtons();
+      if (!silent) {
+        switchInnerPane('pane-summary');
+        autoGenerateTitle({ sessionId: targetId });
+      }
     }
+    // silent モードの場合、呼び出し側（stopRecording 等）が
+    // 明示的に autoGenerateTitle を呼ぶのでここでは呼ばない
   } catch (e) {
     console.error('Summary generation failed:', e);
     if (!silent) alert('要約生成に失敗しました: ' + e.message);
   } finally {
     state.isSummarizing = false;
-    els.summary.classList.remove('generating');
-    if (els.btnSummaryCombo) els.btnSummaryCombo.classList.remove('firing');
+    if (wasActive && targetId === state.activeId) {
+      els.summary.classList.remove('generating');
+      if (els.btnSummaryCombo) els.btnSummaryCombo.classList.remove('firing');
+    }
     setStatus(state.isRecording ? 'listening' : 'idle', state.isRecording ? '録音中' : '停止');
   }
 }
@@ -2396,7 +2445,11 @@ function createSession({ activate = true, title = null, skipSave = false } = {})
   if (activate) state.activeId = id;
   if (!skipSave) persistSessions();
   renderTabs();
-  if (activate) loadActiveSessionIntoDOM();
+  if (activate) {
+    loadActiveSessionIntoDOM();
+    // 新規タブを画面内に収めるよう自動スクロール
+    requestAnimationFrame(scrollActiveTabIntoView);
+  }
   return session;
 }
 

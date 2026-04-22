@@ -406,6 +406,25 @@
           </div>
         </div>
 
+        <div class="field-group">
+          <h3 class="field-group-title">診断ログ</h3>
+          <div class="field">
+            <div class="diag-log-head">
+              <span class="field-label">最近の警告・エラー（最新50件）</span>
+              <div class="diag-log-actions">
+                <button type="button" id="btn-diag-copy" class="pane-btn" title="全件をクリップボードへ">
+                  <span data-icon="copy"></span><span>コピー</span>
+                </button>
+                <button type="button" id="btn-diag-clear" class="pane-btn" title="ログをクリア">
+                  <span data-icon="trash"></span><span>クリア</span>
+                </button>
+              </div>
+            </div>
+            <div id="diag-log-viewer" class="diag-log-viewer" aria-live="polite"></div>
+            <small class="field-hint">整形失敗・通信エラー等のトラブル時に中身を開発者に送ると原因が絞れます</small>
+          </div>
+        </div>
+
       </div>
       <div class="modal-footer">
         <button id="btn-settings-save" class="btn btn-primary">保存</button>
