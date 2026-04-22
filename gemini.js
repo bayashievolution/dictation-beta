@@ -25,9 +25,77 @@ const SYSTEM_PROMPT = `あなたは講義・会議の音声認識結果を読み
  * @param {string} args.newChunk - 整形したい生の音声認識テキスト
  * @returns {Promise<string>} 整形後テキスト
  */
+/**
+ * 非同期スリープ（リトライ間隔用）
+ */
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Gemini generateContent の薄い呼び出し。
+ * - 429(レート制限) / 5xx / Failed to fetch は指数バックオフでリトライ
+ * - 4xx系（401, 400など）は即時throw
+ * - 応答が空（finishReason付き）も throw（呼び出し側でneeds-retry化）
+ */
+async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } = {}) {
+  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        const err = new Error(`Gemini API エラー (${res.status}): ${errText.slice(0, 300)}`);
+        err.status = res.status;
+        // 429 / 500 / 502 / 503 / 504 はリトライ候補
+        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+          lastErr = err;
+          await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
+          continue;
+        }
+        throw err;
+      }
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const reason = data?.candidates?.[0]?.finishReason || '';
+      if (!text) {
+        // SAFETY / RECITATION は即 throw（再試行しても同じ結果）
+        // それ以外（STOP 空・OTHER 等）はリトライしてみる
+        const err = new Error(`Gemini 応答が空です（finishReason: ${reason || 'unknown'}）`);
+        err.finishReason = reason;
+        if (reason !== 'SAFETY' && reason !== 'RECITATION' && attempt < maxRetries) {
+          lastErr = err;
+          await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
+          continue;
+        }
+        throw err;
+      }
+      return text;
+    } catch (e) {
+      // ネットワーク層のエラー（TypeError: Failed to fetch 等）もリトライ候補
+      if ((e.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(e.message || '')) && attempt < maxRetries) {
+        lastErr = e;
+        await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error('Gemini 呼び出し失敗（リトライ上限）');
+}
+
 async function refineWithGemini({ apiKey, context, newChunk }) {
   if (!apiKey) throw new Error('Gemini API キーが設定されていません');
   if (!newChunk || !newChunk.trim()) return '';
+
+  // 極端に短いチャンク（15文字未満）はそのまま生テキストを返す。
+  // Gemini が空レスを返しやすく、整形しても情報が増えない。
+  if (newChunk.trim().length < 15) {
+    return newChunk.trim();
+  }
 
   const userPrompt = [
     '【直前の整形済み文脈】',
@@ -55,24 +123,7 @@ async function refineWithGemini({ apiKey, context, newChunk }) {
     },
   };
 
-  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Gemini API エラー (${res.status}): ${errText.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    const reason = data?.candidates?.[0]?.finishReason || 'unknown';
-    throw new Error(`Gemini 応答が空です（finishReason: ${reason}）`);
-  }
+  const text = await _callGemini(body, apiKey);
   return text.trim();
 }
 
@@ -160,21 +211,7 @@ async function summarizeWithGemini({ apiKey, transcript, title, detail }) {
     },
   };
 
-  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Gemini API エラー (${res.status}): ${errText.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('要約の応答が空です');
+  const text = await _callGemini(body, apiKey);
   return text.trim();
 }
 
@@ -219,21 +256,7 @@ async function generateTitleWithGemini({ apiKey, summary, transcript }) {
     },
   };
 
-  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Gemini API エラー (${res.status}): ${errText.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!raw) throw new Error('タイトルの応答が空です');
+  const raw = await _callGemini(body, apiKey);
 
   // AI が誤って改行や装飾を含めても安全に1行のタイトル文字列に整形する
   let cleaned = raw.trim()
@@ -312,22 +335,7 @@ async function chatWithGemini({ apiKey, contextSources, history, question }) {
     },
   };
 
-  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Gemini API エラー (${res.status}): ${errText.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    const reason = data?.candidates?.[0]?.finishReason || 'unknown';
-    throw new Error(`Gemini 応答が空です（finishReason: ${reason}）`);
-  }
+  const text = await _callGemini(body, apiKey);
   return text.trim();
 }
 
@@ -376,19 +384,17 @@ async function transcribeAudioWithGemini({ apiKey, audioBlob, contextHint }) {
     },
   };
 
-  const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Gemini Audio エラー (${res.status}): ${errText.slice(0, 300)}`);
+  // 音声文字起こしは finishReason 空＝本当に無音の場合があるので、
+  // _callGemini の「空レスでリトライ」を無効化して即空文字列を返す
+  try {
+    const text = await _callGemini(body, apiKey, { maxRetries: 1 });
+    return (text || '').trim();
+  } catch (e) {
+    // finishReason 空のとき（純粋な無音）は空文字列扱い
+    if (e.message && /応答が空/.test(e.message) && !e.finishReason) return '';
+    if (e.finishReason === 'STOP' || e.finishReason === 'OTHER') return '';
+    throw e;
   }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return (text || '').trim();
 }
 
 function blobToBase64(blob) {

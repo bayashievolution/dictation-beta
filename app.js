@@ -18,6 +18,62 @@ const SETTINGS_KEY = 'dictation:settings';
 const SESSIONS_KEY = 'dictation:sessions';
 const ACTIVE_TAB_KEY = 'dictation:activeTab';
 
+/* ───────── 診断ログ（最新N件を保持・設定モーダルでビューアに表示） ───────── */
+const DIAG_LOG_MAX = 50;
+const diagLog = {
+  entries: [], // { ts, level: 'warn'|'error', msg: string }
+  install() {
+    const wrap = (level, original) => (...args) => {
+      try {
+        const msg = args.map(a => {
+          if (a instanceof Error) return (a.stack || a.message || String(a));
+          if (typeof a === 'object') { try { return JSON.stringify(a); } catch { return String(a); } }
+          return String(a);
+        }).join(' ');
+        diagLog.entries.push({ ts: Date.now(), level, msg });
+        while (diagLog.entries.length > DIAG_LOG_MAX) diagLog.entries.shift();
+        // ビューアが開いている時だけ追記
+        const viewer = document.getElementById('diag-log-viewer');
+        if (viewer && !document.getElementById('settings-modal')?.classList.contains('hidden')) {
+          diagLog.renderInto(viewer);
+        }
+      } catch {}
+      return original.apply(console, args);
+    };
+    console.warn  = wrap('warn',  console.warn.bind(console));
+    console.error = wrap('error', console.error.bind(console));
+  },
+  formatTs(ts) {
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  },
+  renderInto(el) {
+    if (!el) return;
+    if (diagLog.entries.length === 0) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = diagLog.entries.slice().reverse().map(e =>
+      `<span class="diag-log-line ${e.level}"><span class="diag-ts">${diagLog.formatTs(e.ts)}</span><span class="diag-level">${e.level}</span>${escapeHtmlSimple(e.msg)}</span>`
+    ).join('');
+  },
+  toPlainText() {
+    return diagLog.entries.map(e =>
+      `[${new Date(e.ts).toLocaleString()}] ${e.level.toUpperCase()}: ${e.msg}`
+    ).join('\n');
+  },
+  clear() {
+    diagLog.entries = [];
+    const v = document.getElementById('diag-log-viewer');
+    if (v) v.innerHTML = '';
+  },
+};
+function escapeHtmlSimple(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+diagLog.install();
+
 const DEFAULT_SETTINGS = {
   apiKey: '',
   silenceSec: 3,
@@ -39,6 +95,7 @@ const DEFAULT_SETTINGS = {
   inputMode: 'web-speech',
   audioDeviceId: '',
   audioChunkSec: 12,
+  audioMinChunkBytes: 400, // 旧1200から感度↑。小さい発話（小声・短語）もGeminiへ送る
 };
 
 const PANE_FONT_KEYS = {
@@ -139,7 +196,43 @@ const state = {
   activeId: null,
   activePane: 'pane-transcript',
   isSummarizing: false,
+
+  // バックグラウンド録音: recordingSessionId は録音対象セッション。
+  // activeId !== recordingSessionId の間は、文字起こしは bgTranscriptEl (detached) に流れる。
+  recordingSessionId: null,
+  bgTranscriptEl: null,
 };
+
+/**
+ * 文字起こしの書き込み先コンテナを返す。
+ * - 通常: els.confirmed（DOM）
+ * - バックグラウンド録音中: 切り離された <div>（録音対象セッションの transcript HTML をロード済）
+ */
+function getWriteContainer() {
+  if (!state.isRecording) return els.confirmed;
+  if (!state.recordingSessionId || state.recordingSessionId === state.activeId) return els.confirmed;
+  // BG mode
+  if (!state.bgTranscriptEl) {
+    const s = state.sessions.find(x => x.id === state.recordingSessionId);
+    state.bgTranscriptEl = document.createElement('div');
+    state.bgTranscriptEl.innerHTML = s?.transcript || '';
+  }
+  return state.bgTranscriptEl;
+}
+
+/** BG コンテナの innerHTML を録音対象セッションのデータへ書き戻す */
+function syncBgToSession() {
+  if (!state.bgTranscriptEl) return;
+  const s = state.sessions.find(x => x.id === state.recordingSessionId);
+  if (!s) return;
+  s.transcript = state.bgTranscriptEl.innerHTML;
+  s.updatedAt = Date.now();
+}
+
+/** BG モードか判定 */
+function isBgRecording() {
+  return state.isRecording && state.recordingSessionId && state.recordingSessionId !== state.activeId;
+}
 
 const els = {
   btnToggle: document.getElementById('btn-toggle'),
@@ -204,6 +297,7 @@ const els = {
   modeGemini: document.getElementById('mode-gemini'),
   inputAudioDevice: document.getElementById('input-audio-device'),
   inputChunkSec: document.getElementById('input-chunk-sec'),
+  inputMinChunkBytes: document.getElementById('input-min-chunk-bytes'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
   zoomPercent: document.getElementById('zoom-percent'),
@@ -387,22 +481,27 @@ function setParagraphContent(pEl, refinedText) {
 
 function appendRawChunk(text) {
   if (!text || !text.trim()) return;
-  hideEmptyHint();
-  if (!state.pendingChunkEl) {
+  const container = getWriteContainer();
+  const inBg = container !== els.confirmed;
+  if (!inBg) hideEmptyHint();
+  if (!state.pendingChunkEl || !container.contains(state.pendingChunkEl)) {
     state.pendingChunkEl = createParagraphEl(text, 'paragraph raw');
-    els.confirmed.appendChild(state.pendingChunkEl);
+    container.appendChild(state.pendingChunkEl);
     state.pendingChunkText = text;
   } else {
     state.pendingChunkText += ' ' + text;
     const body = state.pendingChunkEl.querySelector('.p-body');
     if (body) body.textContent = state.pendingChunkText;
   }
-  autoScroll();
+  if (inBg) syncBgToSession();
+  else autoScroll();
   updateActionButtons();
 }
 
 function getContextForGemini() {
-  const paragraphs = els.confirmed.querySelectorAll('.paragraph:not(.raw):not(.refining)');
+  // 録音対象コンテナから直近の整形済み3段落を使う（BG録音中はBG側から）
+  const container = getWriteContainer();
+  const paragraphs = container.querySelectorAll('.paragraph:not(.raw):not(.refining)');
   const last = Array.from(paragraphs).slice(-3);
   return last.map(p => p.innerText.trim()).filter(Boolean).join('\n\n');
 }
@@ -415,11 +514,18 @@ async function flushPendingToGemini() {
   state.pendingChunkEl = null;
   state.pendingChunkText = '';
 
+  // 書き込み先がBG（detached）か els.confirmed かで、永続化手段が異なる
+  const inBg = state.bgTranscriptEl && state.bgTranscriptEl.contains(targetEl);
+  const persist = () => {
+    if (inBg) syncBgToSession();
+    else snapshotActiveToSession();
+    persistSessions();
+  };
+
   if (!state.settings.aiEnabled || !state.settings.apiKey) {
     targetEl.className = 'paragraph';
     setParagraphContent(targetEl, rawText);
-    snapshotActiveToSession();
-    persistSessions();
+    persist();
     return;
   }
 
@@ -434,18 +540,14 @@ async function flushPendingToGemini() {
     targetEl.className = 'paragraph refined';
     setParagraphContent(targetEl, refined || rawText);
     updateActionButtons();
-    snapshotActiveToSession();
-    persistSessions();
+    persist();
   } catch (e) {
-    // 整形失敗は「後でまとめて再試行」できるよう、静かに needs-retry マークするだけ。
-    // 通信不安定・finishReason 空・短チャンク等で起きるが、録音を遮るほどの重大事ではない。
     console.warn('[refine] skipped (marked for retry):', e.message || e);
     targetEl.className = 'paragraph needs-retry';
     setParagraphContent(targetEl, rawText);
-    snapshotActiveToSession();
-    persistSessions();
+    persist();
   } finally {
-    autoScroll();
+    if (!inBg) autoScroll();
   }
 }
 
@@ -731,6 +833,7 @@ async function startRecording() {
   if (!state.recognition) return;
   state.isRecording = true;
   state.shouldAutoRestart = true;
+  state.recordingSessionId = state.activeId; // BG録音用に固定
   try {
     state.recognition.start();
     setRecordingUI(true);
@@ -740,11 +843,15 @@ async function startRecording() {
     setStatus('error', '開始失敗: ' + e.message);
     state.isRecording = false;
     state.shouldAutoRestart = false;
+    state.recordingSessionId = null;
     setRecordingUI(false);
   }
 }
 
 function stopRecording() {
+  // 停止処理 = 「録音対象セッション（recordingSessionId）」に対して行う。
+  // 現在のactiveIdはBG録音でズレている可能性があるので固定して使う。
+  const recSessionId = state.recordingSessionId || state.activeId;
   state.isRecording = false;
   state.shouldAutoRestart = false;
   if (state.settings.inputMode === 'gemini-audio') {
@@ -758,15 +865,22 @@ function stopRecording() {
   setStatus('idle', '停止');
   setRecordingUI(false);
   clearAllTimers();
-  // 録音停止時のセッションIDを固定。非同期中にタブを切替えても
-  // 要約とタイトルは必ず「録音していたセッション」に書き込まれる
-  const snapshotSessionId = state.activeId;
   flushPendingToGemini().finally(async () => {
-    snapshotActiveToSession();
+    // BGモードの場合、flushPendingToGemini は bgTranscriptEl に書き込んだ後 syncBgToSession で
+    // session.transcript に反映済み。foreground なら snapshot が必要。
+    const inBgAtEnd = state.bgTranscriptEl && recSessionId !== state.activeId;
+    if (inBgAtEnd) {
+      syncBgToSession();
+      state.bgTranscriptEl = null;
+    } else {
+      snapshotActiveToSession();
+    }
+    state.recordingSessionId = null;
     persistSessions();
+    renderTabs(); // 録音中の赤線消去
     if (state.settings.autoSummarize && state.settings.aiEnabled && state.settings.apiKey) {
-      await generateSummary({ silent: true, sessionId: snapshotSessionId });
-      await autoGenerateTitle({ sessionId: snapshotSessionId });
+      await generateSummary({ silent: true, sessionId: recSessionId });
+      await autoGenerateTitle({ sessionId: recSessionId });
     }
   });
 }
@@ -811,7 +925,9 @@ async function startGeminiAudioRecording() {
     state.audioChunks = [];
     if (chunks.length > 0) {
       const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-      if (blob.size > 1200) sendAudioChunkToGemini(blob);
+      // 設定の minChunkBytes 未満は無音と見なしてスキップ（デフォ400: 従来1200より感度↑）
+      const minBytes = Number.isFinite(state.settings.audioMinChunkBytes) ? state.settings.audioMinChunkBytes : 400;
+      if (blob.size > minBytes) sendAudioChunkToGemini(blob);
     }
     // 録音継続中なら再スタート
     if (state.isRecording && state.mediaRecorder === recorder) {
@@ -837,6 +953,7 @@ async function startGeminiAudioRecording() {
 
   state.isRecording = true;
   state.shouldAutoRestart = true;
+  state.recordingSessionId = state.activeId; // BG録音用に固定
   setRecordingUI(true);
   setStatus('listening', '録音中 (Gemini)');
   resetLongSilenceTimer();
@@ -868,10 +985,19 @@ function stopGeminiAudioRecording() {
 
 async function sendAudioChunkToGemini(blob) {
   state.audioInFlightCount++;
-  hideEmptyHint();
+  const container = getWriteContainer();
+  const inBg = container !== els.confirmed;
+  if (!inBg) hideEmptyHint();
   const targetEl = createParagraphEl('（文字起こし中…）', 'paragraph refining');
-  els.confirmed.appendChild(targetEl);
-  autoScroll();
+  container.appendChild(targetEl);
+  if (inBg) syncBgToSession();
+  else autoScroll();
+
+  const persist = () => {
+    if (inBg) syncBgToSession();
+    else snapshotActiveToSession();
+    persistSessions();
+  };
 
   try {
     const text = await transcribeAudioWithGemini({
@@ -882,24 +1008,24 @@ async function sendAudioChunkToGemini(blob) {
     if (text && text.trim()) {
       targetEl.className = 'paragraph refined';
       setParagraphContent(targetEl, text);
-      snapshotActiveToSession();
-      persistSessions();
+      persist();
     } else {
-      targetEl.remove(); // 無音チャンクは捨てる
+      // 空テキストも「需再試行」として残す（消さない）
+      // 「音声不明瞭の可能性。後で整形ボタンから再試行できます」
+      targetEl.className = 'paragraph needs-retry';
+      setParagraphContent(targetEl, '（音声不明瞭・再試行可）');
+      persist();
     }
   } catch (e) {
-    console.error('audio transcription failed:', e);
-    targetEl.className = 'paragraph';
+    // 通信エラー等も黙って needs-retry に落とす（赤バナーは出さない）
+    console.warn('[audio transcribe] skipped (marked for retry):', e.message || e);
+    targetEl.className = 'paragraph needs-retry';
     setParagraphContent(targetEl, '[文字起こし失敗: ' + (e.message || '').slice(0, 60) + ']');
-    setStatus('error', 'Gemini Audio失敗: ' + (e.message || '').slice(0, 60));
-    setTimeout(() => {
-      if (state.isRecording) setStatus('listening', '録音中 (Gemini)');
-      else setStatus('idle', '停止');
-    }, 5000);
+    persist();
   } finally {
     state.audioInFlightCount--;
     updateActionButtons();
-    autoScroll();
+    if (!inBg) autoScroll();
   }
 }
 
@@ -2282,6 +2408,7 @@ function openSettings() {
     els.modeWebSpeech.checked = true;
   }
   els.inputChunkSec.value = state.settings.audioChunkSec || 12;
+  if (els.inputMinChunkBytes) els.inputMinChunkBytes.value = state.settings.audioMinChunkBytes ?? 400;
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   els.fontTranscript.value = state.settings.transcriptFont;
@@ -2292,6 +2419,9 @@ function openSettings() {
   els.sizeSummary.value = state.settings.summarySize;
   settingsWorkingOrder = state.settings.paneOrder.slice();
   renderPaneOrderList();
+  // 診断ログビューアを最新状態で描画
+  const diagViewer = document.getElementById('diag-log-viewer');
+  if (diagViewer) diagLog.renderInto(diagViewer);
   els.settingsModal.classList.remove('hidden');
   setTimeout(() => els.inputApiKey.focus(), 80);
 }
@@ -2313,6 +2443,7 @@ function saveSettingsFromForm() {
   state.settings.inputMode = els.modeGemini.checked ? 'gemini-audio' : 'web-speech';
   state.settings.audioDeviceId = els.inputAudioDevice ? els.inputAudioDevice.value : '';
   state.settings.audioChunkSec = Math.max(5, Math.min(60, Number(els.inputChunkSec.value) || 12));
+  if (els.inputMinChunkBytes) state.settings.audioMinChunkBytes = Math.max(100, Math.min(5000, Number(els.inputMinChunkBytes.value) || 400));
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));
   state.settings.memoFont = els.fontMemo.value;
@@ -2504,13 +2635,54 @@ function switchSession(id) {
   const newIdx = state.sessions.findIndex(s => s.id === id);
   const direction = (oldIdx >= 0 && newIdx >= 0 && newIdx < oldIdx) ? 'left' : 'right';
 
-  if (state.isRecording) stopRecording();
-  snapshotActiveToSession();
+  // ===== BG録音対応: 録音は止めず、書き込み先を切替える =====
+  const oldActiveId = state.activeId;
+  const leavingRecordingSession = state.isRecording && state.recordingSessionId === oldActiveId && id !== state.recordingSessionId;
+  const enteringRecordingSession = state.isRecording && state.recordingSessionId === id && oldActiveId !== state.recordingSessionId;
+
+  if (leavingRecordingSession) {
+    // FG → BG へ遷移: 現在のDOMを録音セッションに保存し、以降はBG要素に書き込む
+    snapshotActiveToSession(); // recSessionに保存
+    // DOM内容を bgTranscriptEl に移す（pendingChunkElも一緒に追従）
+    if (!state.bgTranscriptEl) {
+      state.bgTranscriptEl = document.createElement('div');
+    }
+    // els.confirmed の全子要素を bg に移動（pendingChunkEl 参照はそのまま有効）
+    while (els.confirmed.firstChild) {
+      state.bgTranscriptEl.appendChild(els.confirmed.firstChild);
+    }
+    // bg の内容をセッションへ反映
+    syncBgToSession();
+  } else if (enteringRecordingSession) {
+    // BG → FG へ遷移: 先に現DOMを現activeセッションに保存
+    snapshotActiveToSession();
+    // bgTranscriptEl の内容を録音セッションに同期（最新を持ってる）
+    syncBgToSession();
+    // bg は後で loadActiveSessionIntoDOM が session.transcript を els.confirmed に復元するので、破棄する
+    state.bgTranscriptEl = null;
+  } else {
+    // 通常の切替（録音中でもFG録音中でない場合 or 録音外）
+    snapshotActiveToSession();
+  }
   persistSessions();
+
   state.activeId = id;
   persistSessions();
   renderTabs();
   loadActiveSessionIntoDOM();
+
+  // BG→FG遷移時: 録音対象セッションに戻ったので、els.confirmed に入った内容から
+  // pendingChunkEl を再検出する（raw クラスの末尾要素）
+  if (enteringRecordingSession) {
+    const raws = els.confirmed.querySelectorAll('.paragraph.raw');
+    state.pendingChunkEl = raws[raws.length - 1] || null;
+    if (state.pendingChunkEl) {
+      const body = state.pendingChunkEl.querySelector('.p-body');
+      state.pendingChunkText = body ? body.textContent.trim() : '';
+    } else {
+      state.pendingChunkText = '';
+    }
+  }
 
   // アクティブタブが見切れないよう横スクロール（renderTabs後の次フレームで）
   requestAnimationFrame(scrollActiveTabIntoView);
@@ -2533,7 +2705,8 @@ function closeSession(id) {
   const hasContent = session.transcript || session.memo || session.summary;
   if (hasContent && !confirm(`「${session.title}」を閉じます。この内容は削除されます。よろしいですか？`)) return;
   const wasActive = state.activeId === id;
-  if (wasActive && state.isRecording) stopRecording();
+  // 録音対象セッションが閉じられるなら（BGでも）録音を止める
+  if (state.isRecording && state.recordingSessionId === id) stopRecording();
   state.sessions.splice(idx, 1);
   if (state.sessions.length === 0) {
     createSession({ activate: true, skipSave: true });
@@ -2560,7 +2733,8 @@ function renderTabs() {
   for (const session of state.sessions) {
     const tab = document.createElement('div');
     tab.className = 'tab' + (session.id === state.activeId ? ' active' : '');
-    if (state.isRecording && session.id === state.activeId) tab.classList.add('recording');
+    // 録音中はアクティブ/非アクティブ問わず録音対象セッションを赤で示す
+    if (state.isRecording && session.id === state.recordingSessionId) tab.classList.add('recording');
     tab.dataset.id = session.id;
 
     const title = document.createElement('span');
@@ -2926,6 +3100,21 @@ document.querySelectorAll('[data-pane-clear]').forEach(btn => {
 });
 
 els.btnSettingsSave.addEventListener('click', saveSettingsFromForm);
+
+// 診断ログ: コピー／クリア
+document.getElementById('btn-diag-copy')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const text = diagLog.toPlainText() || '（ログなし）';
+  try {
+    await navigator.clipboard.writeText(text);
+    flashButton(btn, 'コピー完了');
+  } catch (err) {
+    alert('コピー失敗: ' + err.message);
+  }
+});
+document.getElementById('btn-diag-clear')?.addEventListener('click', () => {
+  diagLog.clear();
+});
 
 // モード切替で Gemini 専用フィールドの表示/非表示をアニメーション
 if (els.modeWebSpeech) els.modeWebSpeech.addEventListener('change', () => applyGeminiOnlyVisibility(true));
@@ -3362,10 +3551,21 @@ document.addEventListener('keydown', (e) => {
 });
 
 els.btnTabNew.addEventListener('click', () => {
-  if (state.isRecording) stopRecording();
-  snapshotActiveToSession();
-  persistSessions();
-  createSession({ activate: true });
+  // BG録音対応: 録音は止めず、新セッションを作ってから switchSession で遷移させる
+  // （switchSession内でBG→FG/FG→BGの切替処理が走る）
+  const wasRecording = state.isRecording;
+  if (wasRecording) {
+    // createSession({activate:true}) は loadActiveSessionIntoDOM を呼んで pendingChunkEl を消すため、
+    // 録音中は「activate:false で作ってから switchSession」で切替処理を正しく通す
+    snapshotActiveToSession();
+    persistSessions();
+    const s = createSession({ activate: false, skipSave: true });
+    switchSession(s.id);
+  } else {
+    snapshotActiveToSession();
+    persistSessions();
+    createSession({ activate: true });
+  }
 });
 
 /* 左右タブ送り: 現在のタブから前後へ1つ移動 */

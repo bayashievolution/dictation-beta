@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&family=Noto+Serif+JP:wght@400;500;600&family=M+PLUS+1p:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;600&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600&family=Kaisei+Opti:wght@400;500&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=0.9.38" />
+  <link rel="stylesheet" href="style.css?v=0.10.0" />
 </head>
 <body>
   <div id="app">
@@ -328,6 +328,17 @@
                 </div>
                 <small class="field-hint">この秒数ごとに音声を Gemini へ送信。長いほど精度アップ・遅延増、短いほど反応速い。既定 12 秒。</small>
               </label>
+              <label class="field">
+                <span class="field-label">音声送信しきい値（バイト）</span>
+                <div class="number-stepper">
+                  <input id="input-min-chunk-bytes" type="number" min="100" max="5000" step="50" />
+                  <div class="number-stepper-btns">
+                    <button type="button" class="number-stepper-btn" data-stepper-target="input-min-chunk-bytes" data-stepper-delta="50" tabindex="-1"><span data-icon="chevron-up"></span></button>
+                    <button type="button" class="number-stepper-btn" data-stepper-target="input-min-chunk-bytes" data-stepper-delta="-50" tabindex="-1"><span data-icon="chevron-down"></span></button>
+                  </div>
+                </div>
+                <small class="field-hint">このサイズ未満の音声チャンクは無音とみなしてスキップ。小声も拾いたいなら下げる（既定 400）／無駄送信を減らすなら上げる。</small>
+              </label>
             </div>
           </div>
         </div>
@@ -486,8 +497,8 @@
     </div>
   </div>
 
-  <script src="icons.js?v=0.9.38"></script>
-  <script src="gemini.js?v=0.9.38"></script>
-  <script src="app.js?v=0.9.38"></script>
+  <script src="icons.js?v=0.10.0"></script>
+  <script src="gemini.js?v=0.10.0"></script>
+  <script src="app.js?v=0.10.0"></script>
 </body>
 </html>
