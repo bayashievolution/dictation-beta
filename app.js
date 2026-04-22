@@ -19,9 +19,9 @@ const SESSIONS_KEY = 'dictation:sessions';
 const ACTIVE_TAB_KEY = 'dictation:activeTab';
 
 /* ───────── 診断ログ（最新N件を保持・設定モーダルでビューアに表示） ───────── */
-const DIAG_LOG_MAX = 50;
+const DIAG_LOG_MAX = 120;
 const diagLog = {
-  entries: [], // { ts, level: 'warn'|'error', msg: string }
+  entries: [], // { ts, level: 'info'|'warn'|'error', msg: string }
   install() {
     const wrap = (level, original) => (...args) => {
       try {
@@ -42,6 +42,37 @@ const diagLog = {
     };
     console.warn  = wrap('warn',  console.warn.bind(console));
     console.error = wrap('error', console.error.bind(console));
+    // 未処理エラーもキャプチャ（try/catchを通らないクラッシュ用）
+    window.addEventListener('error', (e) => {
+      try {
+        diagLog.entries.push({
+          ts: Date.now(), level: 'error',
+          msg: `[uncaught] ${e.message || ''} @ ${e.filename || '?'}:${e.lineno || '?'}`
+        });
+        while (diagLog.entries.length > DIAG_LOG_MAX) diagLog.entries.shift();
+      } catch {}
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      try {
+        const r = e.reason;
+        const msg = r instanceof Error ? (r.stack || r.message) : String(r);
+        diagLog.entries.push({ ts: Date.now(), level: 'error', msg: `[unhandled] ${msg}` });
+        while (diagLog.entries.length > DIAG_LOG_MAX) diagLog.entries.shift();
+      } catch {}
+    });
+  },
+  /**
+   * アプリの内部イベント（エラーでない）を記録。
+   * 録音開始/停止、BG切替、チャンク送信、リトライ、発火タイマーなど。
+   * 設定→診断ログでこれを見ることで、DevToolsが開けない環境でも挙動が追える。
+   */
+  info(msg) {
+    diagLog.entries.push({ ts: Date.now(), level: 'info', msg: String(msg) });
+    while (diagLog.entries.length > DIAG_LOG_MAX) diagLog.entries.shift();
+    const viewer = document.getElementById('diag-log-viewer');
+    if (viewer && !document.getElementById('settings-modal')?.classList.contains('hidden')) {
+      diagLog.renderInto(viewer);
+    }
   },
   formatTs(ts) {
     const d = new Date(ts);
@@ -73,6 +104,7 @@ function escapeHtmlSimple(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 diagLog.install();
+window.diagLog = diagLog; // gemini.js 等から info() を呼べるように公開
 
 const DEFAULT_SETTINGS = {
   apiKey: '',
@@ -681,6 +713,7 @@ function clearAllTimers() {
 }
 
 function showSilenceDialog() {
+  diagLog.info(`無音停止ダイアログ発火（${state.settings.autoStopSec}秒無音と判定）`);
   els.silenceDialog.classList.remove('hidden');
   state.silenceCountdownLeft = 30;
   updateSilenceCountdown();
@@ -840,6 +873,7 @@ async function startRecording() {
   state.isRecording = true;
   state.shouldAutoRestart = true;
   state.recordingSessionId = state.activeId; // BG録音用に固定
+  diagLog.info(`録音開始 (Web Speech) session=${state.recordingSessionId?.slice(-6)}`);
   try {
     state.recognition.start();
     setRecordingUI(true);
@@ -858,6 +892,7 @@ function stopRecording() {
   // 停止処理 = 「録音対象セッション（recordingSessionId）」に対して行う。
   // 現在のactiveIdはBG録音でズレている可能性があるので固定して使う。
   const recSessionId = state.recordingSessionId || state.activeId;
+  diagLog.info(`録音停止 session=${recSessionId?.slice(-6)}`);
   state.isRecording = false;
   state.shouldAutoRestart = false;
   if (state.settings.inputMode === 'gemini-audio') {
@@ -935,10 +970,11 @@ async function startGeminiAudioRecording() {
       const minBytes = Number.isFinite(state.settings.audioMinChunkBytes) ? state.settings.audioMinChunkBytes : 400;
       if (blob.size > minBytes) {
         // 発話あり（と推定） → 長無音タイマーをリセット
-        // Geminiモードは onresult が来ないので、ここでリセットしないと話してるのに
-        // 自動停止ダイアログが出てしまう
         resetLongSilenceTimer();
+        diagLog.info(`音声チャンク送信 ${blob.size}B (>${minBytes})`);
         sendAudioChunkToGemini(blob);
+      } else {
+        diagLog.info(`音声チャンクスキップ ${blob.size}B (<=${minBytes}, 無音判定)`);
       }
     }
     // 録音継続中なら再スタート
@@ -966,6 +1002,7 @@ async function startGeminiAudioRecording() {
   state.isRecording = true;
   state.shouldAutoRestart = true;
   state.recordingSessionId = state.activeId; // BG録音用に固定
+  diagLog.info(`録音開始 (Gemini) session=${state.recordingSessionId?.slice(-6)} chunkSec=${state.settings.audioChunkSec || 12}`);
   setRecordingUI(true);
   setStatus('listening', '録音中 (Gemini)');
   resetLongSilenceTimer();
@@ -2653,6 +2690,9 @@ function switchSession(id) {
   const oldActiveId = state.activeId;
   const leavingRecordingSession = state.isRecording && state.recordingSessionId === oldActiveId && id !== state.recordingSessionId;
   const enteringRecordingSession = state.isRecording && state.recordingSessionId === id && oldActiveId !== state.recordingSessionId;
+
+  if (leavingRecordingSession) diagLog.info(`BG録音開始（録音中のまま他タブへ）rec=${state.recordingSessionId?.slice(-6)} → view=${id?.slice(-6)}`);
+  if (enteringRecordingSession) diagLog.info(`BG録音→FG復帰 rec=${state.recordingSessionId?.slice(-6)}`);
 
   if (leavingRecordingSession) {
     // FG → BG へ遷移: 現在のDOMを録音セッションに保存し、以降はBG要素に書き込む

@@ -53,6 +53,7 @@ async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } =
         // 429 / 500 / 502 / 503 / 504 はリトライ候補
         if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
           lastErr = err;
+          if (window.diagLog) window.diagLog.info(`Gemini リトライ ${attempt+1}/${maxRetries} (status=${res.status})`);
           await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
           continue;
         }
@@ -68,6 +69,7 @@ async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } =
         err.finishReason = reason;
         if (reason !== 'SAFETY' && reason !== 'RECITATION' && attempt < maxRetries) {
           lastErr = err;
+          if (window.diagLog) window.diagLog.info(`Gemini リトライ ${attempt+1}/${maxRetries} (empty, reason=${reason || 'none'})`);
           await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
           continue;
         }
@@ -78,6 +80,7 @@ async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } =
       // ネットワーク層のエラー（TypeError: Failed to fetch 等）もリトライ候補
       if ((e.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(e.message || '')) && attempt < maxRetries) {
         lastErr = e;
+        if (window.diagLog) window.diagLog.info(`Gemini リトライ ${attempt+1}/${maxRetries} (network)`);
         await _sleep(retryBaseMs * Math.pow(2, attempt) + Math.random() * 200);
         continue;
       }

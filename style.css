@@ -2409,6 +2409,7 @@ html, body {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+.diag-log-line.info .diag-level { background: rgba(125, 211, 252, 0.15); color: var(--heading); }
 .diag-log-line.warn .diag-level { background: rgba(212, 162, 86, 0.2); color: #d4a256; }
 .diag-log-line.error .diag-level { background: rgba(248, 113, 113, 0.2); color: var(--danger); }
 
