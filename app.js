@@ -933,7 +933,13 @@ async function startGeminiAudioRecording() {
       const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
       // 設定の minChunkBytes 未満は無音と見なしてスキップ（デフォ400: 従来1200より感度↑）
       const minBytes = Number.isFinite(state.settings.audioMinChunkBytes) ? state.settings.audioMinChunkBytes : 400;
-      if (blob.size > minBytes) sendAudioChunkToGemini(blob);
+      if (blob.size > minBytes) {
+        // 発話あり（と推定） → 長無音タイマーをリセット
+        // Geminiモードは onresult が来ないので、ここでリセットしないと話してるのに
+        // 自動停止ダイアログが出てしまう
+        resetLongSilenceTimer();
+        sendAudioChunkToGemini(blob);
+      }
     }
     // 録音継続中なら再スタート
     if (state.isRecording && state.mediaRecorder === recorder) {
@@ -1014,6 +1020,8 @@ async function sendAudioChunkToGemini(blob) {
     if (text && text.trim()) {
       targetEl.className = 'paragraph refined';
       setParagraphContent(targetEl, text);
+      // 実発話が確認できた → 長無音タイマーも確実にリセット
+      if (state.isRecording) resetLongSilenceTimer();
       persist();
     } else {
       // 空テキストも「需再試行」として残す（消さない）
