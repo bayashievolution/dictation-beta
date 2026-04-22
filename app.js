@@ -733,8 +733,15 @@ function buildRecognition() {
         interim += text;
       }
     }
-    els.interim.textContent = interim;
-    if (interim || gotFinal) hideEmptyHint();
+    // BG録音中（録音対象セッションが非表示）は共有の#interimに書かない。
+    // 書くと別セッション（表示中のタブ）の文字起こしエリアに漏れて見える。
+    if (isBgRecording()) {
+      els.interim.textContent = '';
+    } else {
+      els.interim.textContent = interim;
+      if (interim || gotFinal) hideEmptyHint();
+      if (gotFinal || interim) autoScroll();
+    }
     if (gotFinal || interim) {
       resetSilenceTimer();
       resetLongSilenceTimer();
@@ -742,7 +749,6 @@ function buildRecognition() {
         hideSilenceDialog();
       }
     }
-    autoScroll();
   };
 
   rec.onerror = (event) => {
@@ -2647,12 +2653,15 @@ function switchSession(id) {
     if (!state.bgTranscriptEl) {
       state.bgTranscriptEl = document.createElement('div');
     }
-    // els.confirmed の全子要素を bg に移動（pendingChunkEl 参照はそのまま有効）
+    // els.confirmed の全子要素を bg に移動（pendingChunkEl の DOM参照はそのまま有効）
     while (els.confirmed.firstChild) {
       state.bgTranscriptEl.appendChild(els.confirmed.firstChild);
     }
     // bg の内容をセッションへ反映
     syncBgToSession();
+    // pendingChunkEl/Text を一時退避（loadActiveSessionIntoDOM で null化されるのを回避）
+    state._bgPendingChunkEl = state.pendingChunkEl;
+    state._bgPendingChunkText = state.pendingChunkText;
   } else if (enteringRecordingSession) {
     // BG → FG へ遷移: 先に現DOMを現activeセッションに保存
     snapshotActiveToSession();
@@ -2670,6 +2679,15 @@ function switchSession(id) {
   persistSessions();
   renderTabs();
   loadActiveSessionIntoDOM();
+
+  // FG→BG遷移時: loadActiveSessionIntoDOM が pendingChunkEl を null化するので、
+  // 退避していた bg上の pendingChunkEl を復元（以降の appendRawChunk が同じ raw 段落に追記できる）
+  if (leavingRecordingSession) {
+    state.pendingChunkEl = state._bgPendingChunkEl || null;
+    state.pendingChunkText = state._bgPendingChunkText || '';
+    delete state._bgPendingChunkEl;
+    delete state._bgPendingChunkText;
+  }
 
   // BG→FG遷移時: 録音対象セッションに戻ったので、els.confirmed に入った内容から
   // pendingChunkEl を再検出する（raw クラスの末尾要素）
