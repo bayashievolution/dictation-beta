@@ -1632,6 +1632,252 @@ function saveSessionAsHtml() {
   flashButton(els.btnSaveJson, 'HTML保存完了');
 }
 
+/**
+ * 全セッションを1つのHTMLファイルに。各セッションは <details> 折り畳みで
+ * 独立して展開できる。pane はユーザー設定の並び順を尊重。
+ */
+function buildAllSessionsExportHtml() {
+  const fmt = (ts) => {
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const sessionsHtml = state.sessions.map((session, idx) => {
+    const sections = [];
+    for (const paneId of state.settings.paneOrder) {
+      const meta = PANE_META[paneId];
+      let innerHtml = '';
+      if (paneId === 'pane-transcript') innerHtml = session.transcript || '';
+      else if (paneId === 'pane-memo') innerHtml = session.memo || '';
+      else if (paneId === 'pane-summary') innerHtml = session.summary || '';
+      else if (paneId === 'pane-chat') {
+        const chat = (session.chat || []).filter(m => !m.thinking);
+        if (chat.length === 0) continue;
+        innerHtml = chat.map(m => {
+          const who = m.role === 'user' ? 'あなた' : 'Gemini';
+          const body = m.role === 'assistant' ? renderMarkdown(m.content)
+                      : '<p>' + escapeHtml(m.content).replace(/\n/g, '<br>') + '</p>';
+          return `<div class="chat-block ${m.role}"><div class="chat-who">${who}</div>${body}</div>`;
+        }).join('\n');
+      }
+      if (!innerHtml || !innerHtml.trim()) continue;
+      const iconGlyph = paneId === 'pane-transcript' ? '🎙' : paneId === 'pane-memo' ? '📝' : paneId === 'pane-summary' ? '📄' : '💬';
+      sections.push(`<section class="pane-section">
+    <h3><span class="sec-icon">${iconGlyph}</span>${escapeHtml(meta.label)}</h3>
+    <div class="sec-body">${innerHtml}</div>
+  </section>`);
+    }
+    const hasContent = sections.length > 0;
+    const summaryPreview = hasContent ? '' : ' <span class="empty-flag">（空）</span>';
+    const sessId = `sess-${idx + 1}`;
+    return `<details class="sess" id="${sessId}">
+  <summary>
+    <span class="sess-num">${idx + 1}.</span>
+    <span class="sess-title">${escapeHtml(session.title || '(無題)')}</span>
+    <span class="sess-meta">${fmt(session.createdAt)}</span>${summaryPreview}
+  </summary>
+  <div class="sess-body">
+    ${sections.length > 0 ? sections.join('\n    ') : '<p class="empty-note">このセッションは空です。</p>'}
+  </div>
+</details>`;
+  }).join('\n\n');
+
+  // TOCリンク
+  const tocLinks = state.sessions.map((s, idx) =>
+    `<li><a href="#sess-${idx + 1}">${idx + 1}. ${escapeHtml(s.title || '(無題)')}</a></li>`
+  ).join('\n      ');
+
+  const now = new Date();
+  const exportedAt = fmt(now.getTime());
+  const pageTitle = `dictation — 全セッション (${state.sessions.length}件) ${exportedAt}`;
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="dictation:format" content="dictation-multi/v1">
+<title>${escapeHtml(pageTitle)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #1a1a1f;
+  --bg-elevated: #23232a;
+  --bg-subtle: #2d2d36;
+  --border: #3a3a44;
+  --text: #e8e8eb;
+  --text-muted: #9b9ba5;
+  --text-faint: #6b6b73;
+  --accent: #34d399;
+  --heading: #7dd3fc;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 860px; margin: 0 auto; padding: 48px 20px 80px; }
+header.doc-head { margin-bottom: 28px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.brand {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-faint);
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.brand::before { content: '🎙'; font-size: 14px; }
+h1.doc-title { font-size: 26px; font-weight: 600; margin: 8px 0 6px; }
+.doc-meta { font-size: 12px; color: var(--text-muted); }
+.doc-controls {
+  margin: 18px 0 10px;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.doc-controls button {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.doc-controls button:hover { background: var(--bg-subtle); border-color: #4a4a54; }
+.toc {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+.toc summary {
+  cursor: pointer; font-weight: 600; color: var(--accent);
+  padding: 2px 0; outline: none;
+}
+.toc ol { margin: 10px 0 2px; padding-left: 24px; font-size: 13px; color: var(--text-muted); }
+.toc ol li { margin: 2px 0; }
+.toc ol a { color: var(--text-muted); text-decoration: none; }
+.toc ol a:hover { color: var(--accent); }
+
+details.sess {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  padding: 0;
+  scroll-margin-top: 20px;
+}
+details.sess > summary {
+  cursor: pointer;
+  padding: 14px 20px;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  outline: none;
+  user-select: none;
+}
+details.sess > summary::-webkit-details-marker { display: none; }
+details.sess > summary::before {
+  content: '▶';
+  color: var(--text-faint);
+  font-size: 10px;
+  transition: transform 0.2s;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+}
+details.sess[open] > summary::before { transform: rotate(90deg); color: var(--accent); }
+details.sess:hover { border-color: #4a4a54; }
+details.sess[open] { border-color: var(--accent); }
+.sess-num { color: var(--text-faint); font-weight: 500; min-width: 2.5em; flex-shrink: 0; }
+.sess-title { font-weight: 600; flex: 1; word-break: break-word; }
+.sess-meta { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+.empty-flag { font-size: 11px; color: var(--text-faint); margin-left: 6px; }
+.empty-note { color: var(--text-faint); font-style: italic; margin: 0; }
+
+.sess-body {
+  padding: 4px 20px 20px;
+  border-top: 1px solid var(--border);
+}
+.sess-body .pane-section { margin: 18px 0 0; }
+.sess-body .pane-section:first-child { margin-top: 16px; }
+.sess-body .pane-section h3 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600;
+  color: var(--accent);
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sec-icon { font-size: 14px; }
+.sec-body .paragraph { margin: 0 0 1em; }
+.sec-body .paragraph:last-child { margin-bottom: 0; }
+.sec-body .paragraph h2 { color: var(--heading); font-size: 16px; font-weight: 600; margin: 0 0 0.4em; padding: 0; border: none; }
+.sec-body .p-body { color: var(--text); }
+.sec-body h1 { font-size: 1.4em; font-weight: 700; margin: 0.5em 0 0.3em; color: var(--text); }
+.sec-body h2 { color: var(--heading); font-size: 16px; font-weight: 600; margin: 1em 0 0.3em; padding-top: 0.2em; border-top: 1px solid var(--border); }
+.sec-body h2:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.sec-body p { margin: 0.3em 0; }
+.sec-body ul, .sec-body ol { padding-left: 1.3em; margin: 0.3em 0; }
+.sec-body li { margin: 0.15em 0; }
+.chat-block { margin: 10px 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); }
+.chat-block.user { background: rgba(52, 211, 153, 0.08); border-color: rgba(52, 211, 153, 0.35); margin-left: 24px; }
+.chat-block.assistant { background: var(--bg-subtle); margin-right: 24px; }
+.chat-who { font-size: 10px; color: var(--text-faint); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
+footer.doc-foot { margin-top: 36px; text-align: center; font-size: 11px; color: var(--text-faint); letter-spacing: 0.06em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="doc-head">
+    <span class="brand">dictation</span>
+    <h1 class="doc-title">全セッション一覧 (${state.sessions.length}件)</h1>
+    <div class="doc-meta">書き出し: ${exportedAt}</div>
+    <div class="doc-controls">
+      <button type="button" onclick="document.querySelectorAll('details.sess').forEach(d => d.open = true)">すべて展開</button>
+      <button type="button" onclick="document.querySelectorAll('details.sess').forEach(d => d.open = false)">すべて折りたたみ</button>
+    </div>
+  </header>
+  <details class="toc" open>
+    <summary>目次 (${state.sessions.length}件)</summary>
+    <ol>
+      ${tocLinks}
+    </ol>
+  </details>
+
+  ${sessionsHtml}
+
+  <footer class="doc-foot">generated by dictation — 全セッション一括書き出し</footer>
+</div>
+</body>
+</html>
+`;
+}
+
+function saveAllSessionsAsHtml() {
+  snapshotActiveToSession();
+  if (state.sessions.length === 0) {
+    alert('書き出すセッションがありません');
+    return;
+  }
+  const html = buildAllSessionsExportHtml();
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  triggerDownload(blob, `dictation-all-${state.sessions.length}sessions-${stamp}.html`);
+  flashButton(els.btnSaveJson, `${state.sessions.length}件 一括保存完了`);
+}
+
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3108,7 +3354,12 @@ function startAutoSave() {
 els.btnToggle.addEventListener('click', () => state.isRecording ? stopRecording() : startRecording());
 els.btnCopyAllPlain.addEventListener('click', copyAllPlain);
 els.btnCopyAllMd.addEventListener('click', copyAllMultiformat);
-els.btnSaveJson.addEventListener('click', saveSessionAsHtml);
+els.btnSaveJson.addEventListener('click', (e) => {
+  // Shift+クリック: 全セッションを1つのHTML（各タブ展開可）
+  // 通常クリック: アクティブなセッションだけ
+  if (e.shiftKey) saveAllSessionsAsHtml();
+  else saveSessionAsHtml();
+});
 els.btnLoadJson.addEventListener('click', () => els.fileLoad.click());
 els.fileLoad.addEventListener('change', (e) => {
   const f = e.target.files?.[0];
