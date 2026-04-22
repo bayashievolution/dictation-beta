@@ -237,6 +237,10 @@ const state = {
   // ミドル整形（短チャンクの遅延コンソリデーション）用
   isConsolidatingShortChunks: false,
   midChunkWatchdog: null,
+
+  // 複数タブ選択（Ctrl+クリック=追加/除外、Shift+クリック=範囲選択、一括ドラッグ移動）
+  selectedTabIds: new Set(),
+  selectionAnchorId: null, // Shift+クリックの基準
 };
 
 /**
@@ -2566,8 +2570,19 @@ function enablePointerDragSort(list, opts) {
     activeItem = item;
     isDragging = true;
     didReorder = false;
-    item.classList.add('dragging');
+    // グループ決定（単体 or 複数選択）
+    const getGroup = getOpts().getDragGroup;
+    const group = getGroup ? getGroup(item) : [item];
+    activeItem.__dragGroup = group;
+    group.forEach(el => el.classList.add('dragging'));
     ghost = createGhost(item);
+    // 複数選択のドラッグならゴーストに件数バッジを表示
+    if (group.length > 1) {
+      const badge = document.createElement('span');
+      badge.className = 'drag-ghost-badge';
+      badge.textContent = '× ' + group.length;
+      ghost.appendChild(badge);
+    }
     try { list.setPointerCapture(pointerId); } catch {}
   }
 
@@ -2597,12 +2612,16 @@ function enablePointerDragSort(list, opts) {
   function endDrag(e) {
     if (!activeItem) return;
     if (ghost) { try { document.body.removeChild(ghost); } catch {} ghost = null; }
-    activeItem.classList.remove('dragging');
+    const group = activeItem.__dragGroup || [activeItem];
+    group.forEach(el => el.classList.remove('dragging'));
 
     ghost = null;
     const hovered = document.elementFromPoint(e.clientX, e.clientY);
-    const target = hovered ? hovered.closest(itemSelector) : null;
-    if (target && target !== activeItem && list.contains(target)) {
+    let target = hovered ? hovered.closest(itemSelector) : null;
+    // グループ内のタブは drop target にできない（自分自身への移動は無意味）
+    if (target && group.includes(target)) target = null;
+
+    if (target && list.contains(target)) {
       // FLIP: First ── 並べ替え前の位置を記録
       const itemsBefore = Array.from(list.querySelectorAll(itemSelector));
       const firstRects = new Map();
@@ -2613,8 +2632,16 @@ function enablePointerDragSort(list, opts) {
       const before = horiz
         ? e.clientX < r.left + r.width / 2
         : e.clientY < r.top + r.height / 2;
-      if (before) list.insertBefore(activeItem, target);
-      else list.insertBefore(activeItem, target.nextSibling);
+
+      // グループを一旦外して、ターゲット位置に挿入（グループの並び順は保持）
+      group.forEach(el => el.remove());
+      const insertRef = before ? target : target.nextSibling;
+      // insertBefore(item, ref) は item を ref の直前に挿入。
+      // グループを順番に insertBefore すると、各要素が ref の直前に積み重なる形で
+      // 結果として group[0], group[1], ..., ref の順に並ぶ。
+      for (const el of group) {
+        list.insertBefore(el, insertRef);
+      }
 
       // FLIP: Last/Invert ── 新しい位置を測り、差分だけ過去位置へ飛ばす
       const itemsAfter = Array.from(list.querySelectorAll(itemSelector));
@@ -2658,6 +2685,7 @@ function enablePointerDragSort(list, opts) {
       document.addEventListener('click', suppress, { capture: true, once: true });
     }
 
+    if (activeItem) activeItem.__dragGroup = null;
     activeItem = null;
     pointerId = null;
     isDragging = false;
@@ -3157,12 +3185,21 @@ function renameSession(id, title) {
 }
 
 function renderTabs() {
+  // セッションから消えたIDはselectedから除く
+  state.selectedTabIds = new Set(Array.from(state.selectedTabIds).filter(id =>
+    state.sessions.some(s => s.id === id)
+  ));
+
   els.tabsList.innerHTML = '';
   for (const session of state.sessions) {
     const tab = document.createElement('div');
     tab.className = 'tab' + (session.id === state.activeId ? ' active' : '');
     // 録音中はアクティブ/非アクティブ問わず録音対象セッションを赤で示す
     if (state.isRecording && session.id === state.recordingSessionId) tab.classList.add('recording');
+    // 複数選択中の非アクティブタブにハイライト（単体選択時は表示しない＝.active の線で十分）
+    if (state.selectedTabIds.size > 1 && state.selectedTabIds.has(session.id)) {
+      tab.classList.add('selected');
+    }
     tab.dataset.id = session.id;
 
     const title = document.createElement('span');
@@ -3180,8 +3217,34 @@ function renderTabs() {
       closeSession(session.id);
     });
 
-    tab.addEventListener('click', () => {
+    tab.addEventListener('click', (e) => {
       if (title.getAttribute('contenteditable') === 'true') return;
+      // Ctrl/Cmd+クリック: 選択に追加/除外（アクティブセッションは切り替えない）
+      if (e.ctrlKey || e.metaKey) {
+        if (state.selectedTabIds.has(session.id)) state.selectedTabIds.delete(session.id);
+        else state.selectedTabIds.add(session.id);
+        state.selectionAnchorId = session.id;
+        renderTabs();
+        return;
+      }
+      // Shift+クリック: アンカーから範囲選択
+      if (e.shiftKey) {
+        const anchorId = state.selectionAnchorId || state.activeId;
+        const ids = state.sessions.map(s => s.id);
+        const a = ids.indexOf(anchorId);
+        const b = ids.indexOf(session.id);
+        if (a < 0 || b < 0) {
+          state.selectedTabIds = new Set([session.id]);
+        } else {
+          const [lo, hi] = a <= b ? [a, b] : [b, a];
+          state.selectedTabIds = new Set(ids.slice(lo, hi + 1));
+        }
+        renderTabs();
+        return;
+      }
+      // 通常クリック: 選択をこのタブだけにリセットして、セッション切替
+      state.selectedTabIds = new Set([session.id]);
+      state.selectionAnchorId = session.id;
       switchSession(session.id);
     });
 
@@ -3222,6 +3285,16 @@ function renderTabs() {
     itemSelector: '.tab',
     idAttr: 'id',
     onReorder: reorderSessions,
+    // 複数選択中のタブを掴んだら、そのグループ全体をまとめて移動させる
+    getDragGroup: (item) => {
+      const id = item.dataset.id;
+      if (state.selectedTabIds.size >= 2 && state.selectedTabIds.has(id)) {
+        // 現在のDOM並び順を尊重（選択解除されたら普通に1個ドラッグ）
+        return Array.from(els.tabsList.querySelectorAll('.tab'))
+          .filter(el => state.selectedTabIds.has(el.dataset.id));
+      }
+      return [item];
+    },
   });
   // ◀ ▶ ボタンの端っこ到達時グレーアウト
   const activeIdx = state.sessions.findIndex(s => s.id === state.activeId);
@@ -4070,6 +4143,9 @@ document.addEventListener('keydown', (e) => {
 });
 
 els.btnTabNew.addEventListener('click', () => {
+  // 新タブ作成時は複数選択をクリア（旧選択のハイライトが残るのを防ぐ）
+  state.selectedTabIds = new Set();
+  state.selectionAnchorId = null;
   // BG録音対応: 録音は止めず、新セッションを作ってから switchSession で遷移させる
   // （switchSession内でBG→FG/FG→BGの切替処理が走る）
   const wasRecording = state.isRecording;
@@ -4079,6 +4155,8 @@ els.btnTabNew.addEventListener('click', () => {
     snapshotActiveToSession();
     persistSessions();
     const s = createSession({ activate: false, skipSave: true });
+    state.selectedTabIds = new Set([s.id]);
+    state.selectionAnchorId = s.id;
     switchSession(s.id);
   } else {
     snapshotActiveToSession();
