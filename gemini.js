@@ -36,7 +36,38 @@ function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * - 4xx系（401, 400など）は即時throw
  * - 応答が空（finishReason付き）も throw（呼び出し側でneeds-retry化）
  */
+/**
+ * モデルの「思考モード」内部推論が出力に混入した場合に剥がすサニタイザ。
+ * Gemini 2.5 Flash は thinking_budget:0 で通常は抑制できるが、
+ * まれに思考トークンがテキスト側に漏れることがあるので後処理で保険をかける。
+ */
+function _stripThinkingArtifacts(text) {
+  if (!text) return text;
+  let t = text;
+  // 【思考開始】〜【思考終了】ブロック、または「最終的な整形案:」見出し以降を残す
+  if (/【思考/.test(t)) {
+    // 「最終的な」「整形案」「出力」等の最終回答マーカー以降を取り出す
+    const finalMarker = /(?:最終(?:的な?)?(?:整形案|出力|回答|結果)|【出力】|【回答】)[:：]?\s*\n?/i;
+    const m = t.search(finalMarker);
+    if (m >= 0) {
+      // マーカーの次の行から取る
+      t = t.slice(m).replace(finalMarker, '').trim();
+    }
+    // それでも 思考ブロックが残っていたら削除
+    t = t.replace(/【思考(?:開始|終了|ここまで)?】[\s\S]*?【思考(?:終了|ここまで|終わり)】/g, '').trim();
+    t = t.replace(/^【思考[^】]*】[\s\S]*$/m, '').trim();
+  }
+  // 冒頭「これで」「確認」「問題なさそう」等の思考的締めが残っていたら落とす
+  t = t.replace(/\n?(?:これでルールに沿っているか確認[\s\S]*|問題なさそう。?)$/g, '').trim();
+  return t;
+}
+
 async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } = {}) {
+  // 思考モードの出力混入を防ぐため、明示的に無効化（呼び出し側で上書きされない限り）
+  if (!body.generationConfig) body.generationConfig = {};
+  if (body.generationConfig.thinkingConfig === undefined) {
+    body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
   const url = `${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -75,7 +106,12 @@ async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } =
         }
         throw err;
       }
-      return text;
+      // 思考モードの漏れを保険サニタイズ
+      const cleaned = _stripThinkingArtifacts(text);
+      if (cleaned !== text && window.diagLog) {
+        window.diagLog.info(`Gemini 思考トークンを後処理で除去 (${text.length}→${cleaned.length}字)`);
+      }
+      return cleaned;
     } catch (e) {
       // ネットワーク層のエラー（TypeError: Failed to fetch 等）もリトライ候補
       if ((e.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(e.message || '')) && attempt < maxRetries) {
