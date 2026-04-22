@@ -233,6 +233,10 @@ const state = {
   // activeId !== recordingSessionId の間は、文字起こしは bgTranscriptEl (detached) に流れる。
   recordingSessionId: null,
   bgTranscriptEl: null,
+
+  // ミドル整形（短チャンクの遅延コンソリデーション）用
+  isConsolidatingShortChunks: false,
+  midChunkWatchdog: null,
 };
 
 /**
@@ -687,6 +691,73 @@ async function retryPendingRefinements({ showFeedback = true } = {}) {
   return { tried: pending.length, ok, failed };
 }
 
+/* ───────── ミドル整形（短チャンクを蓄積→文脈込みで再整形＋見出し付与） ─────────
+ * Geminiオーディオ録音の短チャンクは個別に文字起こしされるが、見出しが付かず
+ * 誤字が残ることがある。3段落溜まるか 60秒経ったら refineWithGemini で
+ * 文脈込みに統合 + 見出し追加 で整形しなおす。 */
+
+const MID_CHUNK_THRESHOLD = 3;      // 何段落溜まったら発火
+const MID_TIME_THRESHOLD_MS = 60000; // 最初の短チャンクから何ms経ったら発火
+
+function maybeConsolidateShortChunks() {
+  if (state.isConsolidatingShortChunks) return; // 多重実行防止
+  if (!state.settings.aiEnabled || !state.settings.apiKey) return;
+  const container = getWriteContainer();
+  if (!container) return;
+  const shortParas = Array.from(container.querySelectorAll('.paragraph.short-refined'));
+  if (shortParas.length === 0) return;
+
+  const firstTs = parseInt(shortParas[0].dataset.shortTs || '0', 10);
+  const elapsed = firstTs ? Date.now() - firstTs : 0;
+
+  if (shortParas.length < MID_CHUNK_THRESHOLD && elapsed < MID_TIME_THRESHOLD_MS) return;
+
+  consolidateShortChunks(shortParas);
+}
+
+async function consolidateShortChunks(shortParas) {
+  if (!shortParas || shortParas.length === 0) return;
+  state.isConsolidatingShortChunks = true;
+  const container = shortParas[0].parentElement;
+  const inBg = container !== els.confirmed;
+
+  const firstPara = shortParas[0];
+  const rawText = shortParas.map(p => p.innerText.trim()).filter(Boolean).join('\n\n');
+
+  // 先頭を refining に、2つ目以降は削除
+  firstPara.className = 'paragraph refining';
+  setParagraphContent(firstPara, '（文脈整形中…）');
+  for (let i = 1; i < shortParas.length; i++) {
+    shortParas[i].remove();
+  }
+  if (inBg) syncBgToSession(); else snapshotActiveToSession();
+  persistSessions();
+
+  diagLog.info(`ミドル整形開始 ${shortParas.length}段落・${rawText.length}字`);
+
+  try {
+    const refined = await refineWithGemini({
+      apiKey: state.settings.apiKey,
+      context: getContextForGemini(),
+      newChunk: rawText,
+    });
+    firstPara.className = 'paragraph refined';
+    setParagraphContent(firstPara, refined || rawText);
+    diagLog.info(`ミドル整形完了 → ${(refined || rawText).length}字`);
+  } catch (e) {
+    console.warn('[consolidate] failed:', e.message || e);
+    firstPara.className = 'paragraph needs-retry';
+    setParagraphContent(firstPara, rawText);
+  } finally {
+    state.isConsolidatingShortChunks = false;
+    if (inBg) syncBgToSession(); else snapshotActiveToSession();
+    persistSessions();
+    if (!inBg) { updateActionButtons(); autoScroll(); }
+    // 途中でさらに短チャンクが溜まっていれば再度チェック
+    setTimeout(maybeConsolidateShortChunks, 50);
+  }
+}
+
 /* ───────── Silence timers ───────── */
 
 function resetSilenceTimer() {
@@ -922,6 +993,7 @@ function stopRecording() {
   diagLog.info(`録音停止 session=${recSessionId?.slice(-6)}`);
   state.isRecording = false;
   state.shouldAutoRestart = false;
+  if (state.midChunkWatchdog) { clearInterval(state.midChunkWatchdog); state.midChunkWatchdog = null; }
   if (state.settings.inputMode === 'gemini-audio') {
     stopGeminiAudioRecording();
   } else {
@@ -934,6 +1006,14 @@ function stopRecording() {
   setRecordingUI(false);
   clearAllTimers();
   flushPendingToGemini().finally(async () => {
+    // 録音停止時に、残っている short-refined パラグラフを強制的に
+    // ミドル整形（refineWithGemini で見出し付け＋文脈統合）してからサマリ化
+    const container = (state.bgTranscriptEl && recSessionId !== state.activeId)
+      ? state.bgTranscriptEl : els.confirmed;
+    const remainingShort = Array.from(container.querySelectorAll('.paragraph.short-refined'));
+    if (remainingShort.length > 0 && state.settings.aiEnabled && state.settings.apiKey) {
+      await consolidateShortChunks(remainingShort);
+    }
     // BGモードの場合、flushPendingToGemini は bgTranscriptEl に書き込んだ後 syncBgToSession で
     // session.transcript に反映済み。foreground なら snapshot が必要。
     const inBgAtEnd = state.bgTranscriptEl && recSessionId !== state.activeId;
@@ -1041,6 +1121,10 @@ async function startGeminiAudioRecording() {
       state.mediaRecorder.stop(); // onstop で送信＋再スタート
     }
   }, intervalMs);
+
+  // 時間しきい値（60秒経過）だけでも発火できるよう、ウォッチドッグを常駐させる
+  if (state.midChunkWatchdog) clearInterval(state.midChunkWatchdog);
+  state.midChunkWatchdog = setInterval(maybeConsolidateShortChunks, 15 * 1000);
 }
 
 function stopGeminiAudioRecording() {
@@ -1082,11 +1166,16 @@ async function sendAudioChunkToGemini(blob) {
       contextHint: getContextForGemini(),
     });
     if (text && text.trim()) {
-      targetEl.className = 'paragraph refined';
+      // Geminiオーディオ経由の短チャンクは `.short-refined` とマーク。
+      // このあと maybeConsolidateShortChunks() が 3つ溜まったら
+      // refineWithGemini（見出し付き）でまとめて整形する。
+      targetEl.className = 'paragraph short-refined';
+      targetEl.dataset.shortTs = String(Date.now());
       setParagraphContent(targetEl, text);
-      // 実発話が確認できた → 長無音タイマーも確実にリセット
       if (state.isRecording) resetLongSilenceTimer();
       persist();
+      // 遅延ミドル整形をチェック
+      maybeConsolidateShortChunks();
     } else {
       // 空テキストも「需再試行」として残す（消さない）
       // 「音声不明瞭の可能性。後で整形ボタンから再試行できます」
@@ -3612,8 +3701,13 @@ if (els.btnRefineTranscript) {
       if (!state.settings.apiKey) { openSettings(); return; }
       els.btnRefineTranscript.classList.add('firing');
       try {
-        // 貼付け等の未整形テキストを先に整形、その後に needs-retry のパラグラフを再試行
+        // 貼付け等の未整形テキストを先に整形
         await refineUnstructuredInTranscript({ force: true, showFeedback: true });
+        // ショートチャンク（Geminiオーディオ由来）を強制的に統合整形（見出し付け）
+        const container = getWriteContainer();
+        const shorts = Array.from(container.querySelectorAll('.paragraph.short-refined'));
+        if (shorts.length > 0) await consolidateShortChunks(shorts);
+        // 失敗した needs-retry の再試行
         await retryPendingRefinements({ showFeedback: true });
       } finally {
         els.btnRefineTranscript.classList.remove('firing');
