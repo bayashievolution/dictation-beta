@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.10.9" />
+  <link rel="stylesheet" href="captions.css?v=0.10.10" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
@@ -132,12 +132,29 @@
         </label>
       </div>
 
+      <div class="cap-field cap-broadcast-section">
+        <label class="cap-toggle cap-broadcast-toggle">
+          <input type="checkbox" id="cap-broadcast-mode" />
+          <span><strong>配信モード (OBS向け)</strong></span>
+        </label>
+        <div class="cap-row cap-indent">
+          <label class="cap-inline">キー色</label>
+          <input type="color" id="cap-key-color" value="#ff00ff" />
+          <span class="cap-inline" id="cap-key-color-name">マゼンタ</span>
+        </div>
+        <small class="cap-hint">
+          背景をキー色（既定：マゼンタ #ff00ff）にして、OBSのウィンドウキャプチャに
+          「<strong>カラーキー</strong>」フィルタを当てて抜くと、<strong>文字＋影だけ</strong>が透過で残ります。
+          シャドウは純黒・縁取りOFFが自動適用されます。
+        </small>
+      </div>
+
       <div class="cap-field-footer">
         <button id="cap-btn-reset" class="cap-btn-ghost">すべて初期値に戻す</button>
       </div>
     </div>
   </aside>
 
-  <script src="captions.js?v=0.10.9"></script>
+  <script src="captions.js?v=0.10.10"></script>
 </body>
 </html>

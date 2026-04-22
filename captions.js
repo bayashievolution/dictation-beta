@@ -33,6 +33,10 @@ const DEFAULT_SETTINGS = {
   lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため）
   paraCount: 2,
   followLive: true,
+
+  // 配信モード（OBS向け）
+  broadcastMode: false,
+  keyColor: '#ff00ff',    // クロマキー用。マゼンタが既定（文字・影に通常含まれない色）
 };
 
 const DEFAULT_BOX = {
@@ -101,6 +105,9 @@ const els = {
   outLineHeight: document.getElementById('cap-lh-out'),
   inParaCount: document.getElementById('cap-para-count'),
   inFollowLive: document.getElementById('cap-follow-live'),
+  inBroadcast: document.getElementById('cap-broadcast-mode'),
+  inKeyColor: document.getElementById('cap-key-color'),
+  keyColorName: document.getElementById('cap-key-color-name'),
   btnReset: document.getElementById('cap-btn-reset'),
 };
 
@@ -140,6 +147,40 @@ function applySettings() {
     root.style.setProperty('--cap-stroke', `${settings.strokeWidth}px ${settings.strokeColor}`);
   } else {
     root.style.setProperty('--cap-stroke', 'none');
+  }
+
+  // 配信モード
+  root.style.setProperty('--cap-key-color', settings.keyColor);
+  document.body.classList.toggle('broadcast-mode', !!settings.broadcastMode);
+  updateKeyColorName();
+}
+
+/** キー色の名前表示を更新（よくある色は日本語で） */
+function updateKeyColorName() {
+  if (!els.keyColorName) return;
+  const c = (settings.keyColor || '').toLowerCase();
+  const names = {
+    '#ff00ff': 'マゼンタ（推奨）',
+    '#00ff00': 'グリーン',
+    '#00ffff': 'シアン',
+    '#ff0000': 'レッド',
+    '#0000ff': 'ブルー',
+  };
+  els.keyColorName.textContent = names[c] || 'カスタム';
+}
+
+/** 配信モードONを押した瞬間に、OBS向けの最適プリセットを適用 */
+function applyBroadcastPreset() {
+  // シャドウ=純黒・厚めに
+  settings.shadowOn = true;
+  settings.shadowColor = '#000000';
+  settings.shadowBlur = Math.max(settings.shadowBlur, 8);
+  // 縁取り=OFF（キー抜け不良になりやすいので）
+  settings.strokeOn = false;
+  // 文字色が暗い色なら白に寄せる（キー色マゼンタとの対比）
+  const color = (settings.color || '').toLowerCase();
+  if (color === '#000000' || color === settings.keyColor.toLowerCase()) {
+    settings.color = '#ffffff';
   }
 }
 
@@ -190,6 +231,8 @@ function reflectSettingsToUI() {
   els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
   els.inParaCount.value = String(settings.paraCount);
   els.inFollowLive.checked = settings.followLive;
+  if (els.inBroadcast) els.inBroadcast.checked = !!settings.broadcastMode;
+  if (els.inKeyColor) els.inKeyColor.value = settings.keyColor;
 }
 
 function commit() {
@@ -237,6 +280,24 @@ function bindSettingsUI() {
     renderLatest();
   });
   els.inFollowLive.addEventListener('change', () => { settings.followLive = els.inFollowLive.checked; commit(); });
+
+  // 配信モードトグル
+  if (els.inBroadcast) {
+    els.inBroadcast.addEventListener('change', () => {
+      settings.broadcastMode = els.inBroadcast.checked;
+      if (settings.broadcastMode) {
+        applyBroadcastPreset(); // シャドウ厚め、縁取りOFF等
+        reflectSettingsToUI();  // プリセット反映でUI更新
+      }
+      commit();
+    });
+  }
+  if (els.inKeyColor) {
+    els.inKeyColor.addEventListener('input', () => {
+      settings.keyColor = els.inKeyColor.value;
+      commit();
+    });
+  }
 
   els.btnReset.addEventListener('click', () => {
     if (!confirm('字幕の表示設定をすべて初期値に戻しますか？')) return;

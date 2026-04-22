@@ -311,3 +311,89 @@ select:focus { border-color: var(--cap-accent); }
 :fullscreen body.cap-body, body.cap-body:fullscreen {
   background: #000;
 }
+
+/* ───────── 配信モード（OBS用） ─────────
+ * body 全体をキー色（既定マゼンタ）にして、OBSのカラーキーで抜けば
+ * 透過背景 + 文字 + 影 だけが残る。ただしUIパーツ（ツールバー等）は
+ * 利用者が操作できる状態にしつつ、OBSのキャプチャには写り込まないよう
+ * キー色を塗っておく。 */
+body.broadcast-mode {
+  background: var(--cap-key-color, #ff00ff);
+}
+body.broadcast-mode .cap-box {
+  background: var(--cap-key-color, #ff00ff) !important;
+  /* 不透明にしないとキー色と干渉してまだら抜けになる */
+  cursor: default;
+}
+body.broadcast-mode .cap-box:hover {
+  outline: none;
+}
+body.broadcast-mode .cap-resize {
+  display: none;
+}
+/* 配信モードではツールバーもキー色の帯にする（マウスは拾える状態で、OBS側では抜かれる） */
+body.broadcast-mode .cap-toolbar {
+  background: var(--cap-key-color, #ff00ff);
+  opacity: 0.001; /* 操作できる透明度。hoverで戻す */
+  transition: opacity 0.2s;
+}
+body.broadcast-mode .cap-toolbar:hover {
+  opacity: 1;
+  /* hoverで出した時はUIが見えるよう背景を戻す */
+  background: linear-gradient(to bottom, rgba(0,0,0,0.85), rgba(0,0,0,0.2));
+}
+body.broadcast-mode .cap-session-title {
+  display: none; /* 配信時は邪魔 */
+}
+
+/* 配信モード中の目印（ユーザーにだけ見える、配信には映らない） */
+body.broadcast-mode::before {
+  content: '配信モード ON (OBSでカラーキー抜き用)';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px 14px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 5;
+  letter-spacing: 0.05em;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+body.broadcast-mode:hover::before {
+  opacity: 1;
+}
+
+/* 配信モード中、テキスト自体はユーザー設定のまま（bg-color は無視される形） */
+body.broadcast-mode #cap-box-text {
+  text-shadow: var(--cap-text-shadow) !important;
+}
+
+/* 配信モード用設定セクション */
+.cap-broadcast-section {
+  border-top: 1px solid var(--cap-border);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.cap-broadcast-toggle {
+  font-size: 14px;
+}
+.cap-broadcast-toggle strong {
+  color: var(--cap-accent);
+}
+.cap-hint {
+  font-size: 11px;
+  color: var(--cap-text-muted);
+  line-height: 1.6;
+  padding-left: 20px;
+  margin-top: 4px;
+  display: block;
+}
+.cap-hint strong {
+  color: var(--cap-text);
+  font-weight: 600;
+}
