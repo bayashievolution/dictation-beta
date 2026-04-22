@@ -785,26 +785,53 @@ function buildRecognition() {
   };
 
   rec.onerror = (event) => {
-    console.error('SpeechRecognition error:', event.error);
-    if (event.error === 'no-speech') return;
-    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+    const err = event.error;
+    if (err === 'no-speech') return;
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      // マイク拒否: 完全停止
+      console.error('SpeechRecognition error:', err);
       setStatus('error', 'マイク拒否');
       state.shouldAutoRestart = false;
       state.isRecording = false;
       setRecordingUI(false);
-      showMicDeniedGuide(event.error);
-    } else {
-      setStatus('error', `エラー: ${event.error}`);
+      showMicDeniedGuide(err);
+      return;
     }
+    if (err === 'network' || err === 'aborted' || err === 'audio-capture') {
+      // 過渡的エラー: 赤バナーは出さず、diagLogに記録。onendで自動再接続が走る。
+      // Chromeは長時間録音で約5分ごとに 'network' を返すことがある既知仕様。
+      diagLog.info(`SpeechRecognition 過渡エラー(${err}) → 自動再接続待ち`);
+      return;
+    }
+    // その他の未知エラーだけ赤バナー表示
+    console.error('SpeechRecognition error:', err);
+    setStatus('error', `エラー: ${err}`);
   };
 
   rec.onend = () => {
     els.interim.textContent = '';
     if (state.shouldAutoRestart && state.isRecording) {
-      try { rec.start(); }
-      catch {
-        setTimeout(() => { if (state.isRecording) try { rec.start(); } catch {} }, 300);
-      }
+      // 即再start()は失敗しやすいので、少し遅延してからリトライ
+      const tryRestart = (attempt = 0) => {
+        if (!state.isRecording) return;
+        try {
+          rec.start();
+          if (attempt > 0) diagLog.info(`SpeechRecognition 再接続成功 (attempt=${attempt + 1})`);
+        } catch (e) {
+          if (attempt < 4 && state.isRecording) {
+            // 指数バックオフ: 200ms → 400ms → 800ms → 1600ms
+            const delay = 200 * Math.pow(2, attempt);
+            diagLog.info(`SpeechRecognition 再接続リトライ ${attempt + 1} in ${delay}ms (${e.message || e.name || 'error'})`);
+            setTimeout(() => tryRestart(attempt + 1), delay);
+          } else {
+            diagLog.info(`SpeechRecognition 再接続失敗（上限到達）`);
+            console.error('SpeechRecognition restart failed:', e);
+            setStatus('error', '再接続失敗');
+          }
+        }
+      };
+      // 少しだけ待ってから再スタート（連続start()でのInvalidStateErrorを避ける）
+      setTimeout(() => tryRestart(0), 120);
     } else {
       setStatus('idle', '停止');
       setRecordingUI(false);
