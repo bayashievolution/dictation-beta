@@ -406,11 +406,18 @@ html, body {
   /* 録音中の色は .tab-active-indicator.recording に移譲 */
 }
 
-/* 複数選択中は視覚的な色ハイライトを出さない（ドラッグ後のずれ表示対策）。
- * ドラッグ可能な操作は内部の selectedTabIds セットで機能するが、
- * 外観上の目印は出さず、単体クリックでアクティブ指示線のみが戻る運用。 */
-.tab.selected:not(.active) { /* 非表示に保つ */ }
-.tab.selected.active { /* 非表示に保つ */ }
+/* 複数選択中（Ctrl/Shiftクリック）: 非アクティブだが選択されているタブを強調。
+ * アクセント色の半透明バックグラウンド＋薄い枠で「選んだ感」を出す。
+ * （ドラッグ後のアクティブ線ズレは endDrag の updateActiveTabIndicator で直す） */
+.tab.selected:not(.active) {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.4);
+}
+.tab.selected.active {
+  /* activeの見た目を保ちつつ、選択グループの一部であることを枠で示す */
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.5);
+}
 
 .tab {
   position: relative;

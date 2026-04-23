@@ -2702,6 +2702,8 @@ function enablePointerDragSort(list, opts) {
     if (!item || !list.contains(item)) return;
     // ボタン/入力欄クリックはドラッグ発動しない
     if (e.target !== item && e.target.closest('button, input, textarea, select, [contenteditable="true"]')) return;
+    // 左クリック（主ボタン）以外はドラッグ対象外（右クリックは contextmenu に任せる）
+    if (e.button !== undefined && e.button !== 0) return;
 
     startX = e.clientX;
     startY = e.clientY;
@@ -3244,7 +3246,15 @@ function hideTabContextMenu() {
   if (menu) menu.classList.add('hidden');
 }
 
+// メニューを開いた瞬間の event がそのまま document まで伝播して
+// 外側リスナーが「外でクリック/右クリックされた」と誤認して即閉じする問題を防ぐガード。
+let _tabCtxMenuOpening = false;
+
 function showTabContextMenu(sessionId, clientX, clientY) {
+  // 開いたイベントと同じバブリング中の外側リスナーの誤発火を無効化
+  _tabCtxMenuOpening = true;
+  setTimeout(() => { _tabCtxMenuOpening = false; }, 0);
+
   let menu = document.getElementById('tab-context-menu');
   if (!menu) {
     menu = document.createElement('div');
@@ -3253,10 +3263,11 @@ function showTabContextMenu(sessionId, clientX, clientY) {
     document.body.appendChild(menu);
     // 初回だけ外側クリック/Escで閉じるリスナーを設置
     document.addEventListener('click', (e) => {
+      if (_tabCtxMenuOpening) return;
       if (!menu.contains(e.target)) hideTabContextMenu();
     }, true);
     document.addEventListener('contextmenu', (e) => {
-      // このメニュー上での右クリックは許容、それ以外は別の場所でのcontextmenuで閉じる
+      if (_tabCtxMenuOpening) return; // 開いた直後のイベントは無視
       if (!menu.contains(e.target)) hideTabContextMenu();
     });
     document.addEventListener('keydown', (e) => {
