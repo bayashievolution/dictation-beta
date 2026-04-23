@@ -339,74 +339,204 @@ function bindSettingsUI() {
 }
 
 /* ───────── デスクトップオーバーレイ（Document Picture-in-Picture） ─────────
- * Chrome 116+ の documentPictureInPicture API を使って、Chromeウィンドウを
- * 最小化しても他アプリの上に浮き続ける小窓に字幕ボックスを移す。
- * これで Zoom / Meet / 授業スライド等の前面に字幕が出せる（OS制約で完全
- * 透過背景には出来ないが、位置・サイズ自由、常に最前面）。 */
-
-let _pipWindow = null;
-let _pipOriginalParent = null;
-let _pipOriginalNextSibling = null;
+ * UX: ボタンを押したら「親ウィンドウが形を変えた」ように見せるため、
+ * PiPウィンドウに字幕を移動→親ウィンドウを閉じる。
+ * PiP側には自己完結で動く captions スクリプトを inject しておき、
+ * 親が消えても字幕表示が止まらないようにする。
+ * 右クリックで「通常モードに戻る」→ 親を開き直して PiP を閉じる。 */
 
 async function togglePipOverlay() {
-  if (_pipWindow) {
-    try { _pipWindow.close(); } catch {}
-    return;
-  }
   if (!('documentPictureInPicture' in window)) {
     alert('このブラウザではデスクトップオーバーレイ（Document Picture-in-Picture）に対応していません。\n\nChrome 116以上で試してください。');
     return;
   }
   try {
     const rect = els.box.getBoundingClientRect();
-    _pipWindow = await documentPictureInPicture.requestWindow({
+    const pipWin = await documentPictureInPicture.requestWindow({
       width: Math.max(320, Math.round(rect.width) || 720),
       height: Math.max(120, Math.round(rect.height) || 180),
     });
 
-    // 現ドキュメントのスタイルシートをPiP側へコピー
+    // 現ドキュメントのスタイルシートをPiP側へコピー（link と同様に相対解決するよう絶対URL化）
     [...document.styleSheets].forEach(ss => {
       try {
         if (ss.href) {
-          const link = _pipWindow.document.createElement('link');
+          const link = pipWin.document.createElement('link');
           link.rel = 'stylesheet';
           link.href = ss.href;
-          _pipWindow.document.head.appendChild(link);
+          pipWin.document.head.appendChild(link);
         } else {
-          const style = _pipWindow.document.createElement('style');
+          const style = pipWin.document.createElement('style');
           style.textContent = [...ss.cssRules].map(r => r.cssText).join('\n');
-          _pipWindow.document.head.appendChild(style);
+          pipWin.document.head.appendChild(style);
         }
-      } catch (e) { /* CORS等でアクセスできないシートは諦める */ }
+      } catch (e) { /* CORSで読めないシートはスキップ */ }
     });
-    // body にも cap-body クラスを付与（背景色などの前提）
-    _pipWindow.document.body.classList.add('cap-body', 'pip-mode');
-    // PiP 側の <title>
-    _pipWindow.document.title = '字幕（デスクトップオーバーレイ）';
+    pipWin.document.body.classList.add('cap-body', 'pip-mode');
+    pipWin.document.title = '字幕（デスクトップオーバーレイ）';
 
-    // 字幕ボックスを現ウィンドウから PiP ウィンドウに「移動」
-    // （MOVE なのでイベントリスナー・state 参照は全部そのまま動く）
-    _pipOriginalParent = els.box.parentElement;
-    _pipOriginalNextSibling = els.box.nextSibling;
-    _pipWindow.document.body.appendChild(els.box);
+    // 字幕ボックスを PiP に移動（MOVE: DOM参照はそのまま、ただし親が閉じたらJSは動かなくなる）
+    pipWin.document.body.appendChild(els.box);
 
-    // PiP ウィンドウが閉じられたら元の位置に戻す
-    _pipWindow.addEventListener('pagehide', () => {
-      if (_pipOriginalParent) {
-        _pipOriginalParent.insertBefore(els.box, _pipOriginalNextSibling);
-      }
-      _pipWindow = null;
-      _pipOriginalParent = null;
-      _pipOriginalNextSibling = null;
-      if (els.btnPip) els.btnPip.classList.remove('active');
-    });
+    // 親のJSコンテキストが死んでも PiP 側で字幕更新が続くよう、
+    // 自己完結スクリプトを注入（localStorage を直接購読）
+    const captionsUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+      ? chrome.runtime.getURL('captions.html')
+      : location.href;
+    injectPipSelfContainedScript(pipWin, captionsUrl);
 
-    if (els.btnPip) els.btnPip.classList.add('active');
+    // 親ウィンドウを閉じる（PiP が親の「変身形態」のように見える）
+    // 少しだけ遅延してPiPの初期化が確実に終わってから。
+    setTimeout(() => {
+      try { window.close(); } catch {}
+    }, 50);
   } catch (e) {
     console.warn('PiP オーバーレイ起動失敗:', e);
     alert('デスクトップオーバーレイの起動に失敗しました。\n\n' + (e.message || e));
-    _pipWindow = null;
   }
+}
+
+/**
+ * PiP ウィンドウに、親が閉じても動作する自己完結型の字幕更新スクリプトを注入する。
+ * - localStorage を storage イベント＋1秒ポーリングで監視し最新発話を表示
+ * - 右クリックで「通常モードに戻る」メニュー（親を再オープンしてPiPを閉じる）
+ */
+function injectPipSelfContainedScript(pipWin, captionsUrl) {
+  const script = pipWin.document.createElement('script');
+  // テンプレートリテラルの中に実際のJSコードを入れる。同origin（chrome-extension://）で動く
+  script.textContent = `
+(function() {
+  var SESSIONS_KEY = 'dictation:sessions';
+  var ACTIVE_TAB_KEY = 'dictation:activeTab';
+  var SETTINGS_KEY = 'dictation:captionsSettings';
+
+  function getActiveSession() {
+    try {
+      var raw = localStorage.getItem(SESSIONS_KEY);
+      if (!raw) return null;
+      var sessions = JSON.parse(raw);
+      if (!Array.isArray(sessions) || sessions.length === 0) return null;
+      var activeRaw = localStorage.getItem(ACTIVE_TAB_KEY);
+      var activeId = null;
+      if (activeRaw) { try { activeId = JSON.parse(activeRaw); } catch (e) { activeId = activeRaw; } }
+      return sessions.find(function(s) { return s.id === activeId; }) || sessions[sessions.length - 1];
+    } catch (e) { return null; }
+  }
+  function getSettings() {
+    try { var r = localStorage.getItem(SETTINGS_KEY); if (r) return JSON.parse(r); } catch (e) {}
+    return { paraCount: 2, followLive: true };
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function(c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; });
+  }
+
+  function renderLatest() {
+    var session = getActiveSession();
+    var settings = getSettings();
+    var textEl = document.getElementById('cap-box-text');
+    var scrollEl = document.getElementById('cap-box-scroll');
+    if (!textEl) return;
+    if (!session) { textEl.innerHTML = ''; return; }
+    var tmp = document.createElement('div');
+    tmp.innerHTML = session.transcript || '';
+    var paras = Array.from(tmp.querySelectorAll('.paragraph'));
+    if (paras.length === 0 && (tmp.textContent || '').trim()) {
+      paras = tmp.textContent.trim().split(/\\n{2,}/).map(function(t) {
+        var d = document.createElement('div'); d.textContent = t; return d;
+      });
+    }
+    var n = Math.max(1, Math.min(5, settings.paraCount || 2));
+    var latest = paras.slice(-n);
+    if (latest.length === 0) { textEl.innerHTML = ''; }
+    else {
+      textEl.innerHTML = latest.map(function(p, idx) {
+        var isLast = idx === latest.length - 1;
+        var cls = 'cap-para' + (isLast ? ' latest' : '');
+        var h2 = p.querySelector && p.querySelector('h2');
+        if (h2) {
+          var heading = escapeHtml((h2.textContent || '').trim());
+          var bodyEl = p.querySelector('.p-body');
+          var bodyText = escapeHtml(((bodyEl ? bodyEl.textContent : (p.textContent || '').replace(h2.textContent, '')) || '').trim());
+          return '<p class="' + cls + '"><strong>' + heading + '</strong><br>' + bodyText + '</p>';
+        }
+        var txt = escapeHtml(((p.textContent || '')).trim());
+        return '<p class="' + cls + '">' + txt + '</p>';
+      }).join('');
+    }
+    if (settings.followLive !== false && scrollEl) {
+      requestAnimationFrame(function() { scrollEl.scrollTop = scrollEl.scrollHeight; });
+    }
+  }
+
+  // ライブ同期
+  window.addEventListener('storage', function(e) {
+    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY || e.key === SETTINGS_KEY) renderLatest();
+  });
+  setInterval(renderLatest, 1000);
+  renderLatest();
+
+  // 右クリック: 通常モードに戻す or 閉じる
+  var CAPTIONS_URL = ${JSON.stringify(captionsUrl)};
+  function showPipMenu(x, y) {
+    var old = document.getElementById('pip-ctx-menu');
+    if (old) old.remove();
+    var menu = document.createElement('div');
+    menu.id = 'pip-ctx-menu';
+    menu.setAttribute('style',
+      'position:fixed;z-index:9999;min-width:200px;padding:6px;' +
+      'background:#23232a;border:1px solid #3a3a44;border-radius:10px;' +
+      'box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:Noto Sans JP,sans-serif;' +
+      'font-size:13px;color:#e8e8eb;user-select:none;');
+    var items = [
+      { label: '🪟 通常モードに戻る', act: function() {
+          try { window.open(CAPTIONS_URL, 'dictation-captions', 'popup=yes,width=960,height=540,resizable=yes'); } catch(e) {}
+          setTimeout(function() { window.close(); }, 30);
+        } },
+      { label: '⛶ 全画面切替', act: function() {
+          try {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else document.exitFullscreen();
+          } catch(e) {}
+        } },
+      { label: '✕ オーバーレイを閉じる', act: function() { window.close(); } },
+    ];
+    items.forEach(function(it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.label;
+      b.setAttribute('style',
+        'display:block;width:100%;padding:8px 12px;background:transparent;' +
+        'color:#e8e8eb;border:0;border-radius:6px;text-align:left;font:inherit;cursor:pointer;');
+      b.addEventListener('mouseenter', function() { b.style.background = '#2d2d36'; });
+      b.addEventListener('mouseleave', function() { b.style.background = 'transparent'; });
+      b.addEventListener('click', function(e) { e.stopPropagation(); menu.remove(); it.act(); });
+      menu.appendChild(b);
+    });
+    document.body.appendChild(menu);
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var r = menu.getBoundingClientRect();
+    menu.style.left = Math.min(x, vw - r.width - 4) + 'px';
+    menu.style.top  = Math.min(y, vh - r.height - 4) + 'px';
+    setTimeout(function() {
+      var close = function(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close, true); } };
+      document.addEventListener('click', close, true);
+    }, 0);
+  }
+  document.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+    showPipMenu(e.clientX, e.clientY);
+  });
+  // 画面下部に小さな目印（右クリックでメニュー）
+  var hint = document.createElement('div');
+  hint.setAttribute('style',
+    'position:fixed;bottom:4px;right:8px;font-size:10px;color:rgba(255,255,255,0.35);' +
+    'pointer-events:none;user-select:none;z-index:8000;');
+  hint.textContent = '右クリック: メニュー';
+  document.body.appendChild(hint);
+  setTimeout(function() { hint.style.transition = 'opacity 0.6s'; hint.style.opacity = '0'; }, 3500);
+})();
+`;
+  pipWin.document.body.appendChild(script);
 }
 
 /* ───────── ドラッグ・リサイズ ───────── */
