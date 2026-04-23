@@ -37,6 +37,10 @@ const DEFAULT_SETTINGS = {
   // 配信モード（OBS向け）
   broadcastMode: false,
   keyColor: '#ff00ff',    // クロマキー用。マゼンタが既定（文字・影に通常含まれない色）
+
+  // OSD関連
+  osdAi: false,           // AIで文節区切り整形するか
+  transition: 'fade',     // 'none' | 'fade' | 'slide-right' | 'slide-left' | 'scroll'
 };
 
 const DEFAULT_BOX = {
@@ -83,7 +87,8 @@ const els = {
   sessionTitle: document.getElementById('cap-session-title'),
   btnSettings: document.getElementById('cap-btn-settings'),
   btnFullscreen: document.getElementById('cap-btn-fullscreen'),
-  btnPip: document.getElementById('cap-btn-pip'),
+  btnFit: document.getElementById('cap-btn-fit'),
+  btnOsd: document.getElementById('cap-btn-osd'),
   btnResetPos: document.getElementById('cap-btn-reset-pos'),
   settings: document.getElementById('cap-settings'),
   settingsClose: document.getElementById('cap-settings-close'),
@@ -110,6 +115,8 @@ const els = {
   inBroadcast: document.getElementById('cap-broadcast-mode'),
   inKeyColor: document.getElementById('cap-key-color'),
   keyColorName: document.getElementById('cap-key-color-name'),
+  inOsdAi: document.getElementById('cap-osd-ai'),
+  inTransition: document.getElementById('cap-transition'),
   btnReset: document.getElementById('cap-btn-reset'),
 };
 
@@ -244,6 +251,8 @@ function reflectSettingsToUI() {
   els.inFollowLive.checked = settings.followLive;
   if (els.inBroadcast) els.inBroadcast.checked = !!settings.broadcastMode;
   if (els.inKeyColor) els.inKeyColor.value = settings.keyColor;
+  if (els.inOsdAi) els.inOsdAi.checked = !!settings.osdAi;
+  if (els.inTransition) els.inTransition.value = settings.transition || 'fade';
 }
 
 function commit() {
@@ -327,9 +336,32 @@ function bindSettingsUI() {
     } catch (e) { console.warn('fullscreen failed', e); }
   });
 
-  // デスクトップオーバーレイ（Document Picture-in-Picture）
-  if (els.btnPip) {
-    els.btnPip.addEventListener('click', togglePipOverlay);
+  // ウィンドウフィット: 字幕ボックスをウィンドウ全体に広げて中央配置
+  if (els.btnFit) {
+    els.btnFit.addEventListener('click', fitBoxToWindow);
+  }
+
+  // OSDモード: UIを全部隠して字幕だけ大きく表示（右クリックで復帰）
+  if (els.btnOsd) {
+    els.btnOsd.addEventListener('click', enterOsdMode);
+  }
+
+  // OSD AI整形
+  if (els.inOsdAi) {
+    els.inOsdAi.addEventListener('change', () => {
+      settings.osdAi = els.inOsdAi.checked;
+      commit();
+      renderLatest(); // 即反映
+    });
+  }
+
+  // トランジション種別
+  if (els.inTransition) {
+    els.inTransition.addEventListener('change', () => {
+      settings.transition = els.inTransition.value;
+      commit();
+      applyTransitionMode();
+    });
   }
 
   els.btnResetPos.addEventListener('click', () => {
@@ -338,87 +370,111 @@ function bindSettingsUI() {
   });
 }
 
-/* ───────── デスクトップオーバーレイ（Document Picture-in-Picture） ─────────
- * 親ウィンドウを「PiPモード中 UI」に変形させて、PiPに字幕を出す。
- * Document PiP は opener が閉じると連鎖して閉じる仕様なので親は殺さない。
- * 親はPiP中に「🪟 通常モードに戻す」という巨大ボタンだけ表示。
- * PiPを閉じると字幕ボックスが親に戻って通常モードに復元。
- */
+/* ───────── ウィンドウフィット ───────── */
+function fitBoxToWindow() {
+  const margin = 0;
+  const w = window.innerWidth - margin * 2;
+  const h = window.innerHeight - margin * 2;
+  box = { left: margin, top: margin, width: w, height: h };
+  saveBox(box);
+  applyBox();
+}
 
-let _pipWindow = null;
-let _pipOriginalParent = null;
-let _pipOriginalNextSibling = null;
+/* ───────── OSDモード（親ウィンドウ内で字幕以外を隠す） ───────── */
+function enterOsdMode() {
+  document.body.classList.add('osd-mode');
+  // ウィンドウ全体にフィットさせた状態で表示
+  fitBoxToWindow();
+  // 初回だけヒントを出す
+  showOsdHintBriefly();
+  // 右クリック / Esc で抜ける
+  document.addEventListener('contextmenu', exitOsdOnContext, true);
+  document.addEventListener('keydown', exitOsdOnKey);
+}
+function exitOsdMode() {
+  document.body.classList.remove('osd-mode');
+  document.removeEventListener('contextmenu', exitOsdOnContext, true);
+  document.removeEventListener('keydown', exitOsdOnKey);
+}
+function exitOsdOnContext(e) {
+  if (!document.body.classList.contains('osd-mode')) return;
+  e.preventDefault();
+  exitOsdMode();
+}
+function exitOsdOnKey(e) {
+  if (e.key === 'Escape' && document.body.classList.contains('osd-mode')) {
+    exitOsdMode();
+  }
+}
+function showOsdHintBriefly() {
+  let hint = document.getElementById('cap-osd-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'cap-osd-hint';
+    hint.className = 'cap-osd-hint';
+    hint.innerHTML = '<strong>OSDモード</strong><br>右クリック or Esc で通常表示に戻る';
+    document.body.appendChild(hint);
+  }
+  hint.classList.remove('fade-out');
+  hint.classList.add('show');
+  clearTimeout(hint._t);
+  hint._t = setTimeout(() => {
+    hint.classList.add('fade-out');
+    setTimeout(() => hint.classList.remove('show', 'fade-out'), 600);
+  }, 2600);
+}
 
-async function togglePipOverlay() {
-  // 既にPiP中 → PiPを閉じる（pagehideで復元）
-  if (_pipWindow) {
-    try { _pipWindow.close(); } catch {}
-    return;
-  }
-  if (!('documentPictureInPicture' in window)) {
-    alert('このブラウザではデスクトップオーバーレイ（Document Picture-in-Picture）に対応していません。\n\nChrome 116以上で試してください。');
-    return;
-  }
+/* ───────── トランジション設定反映（CSS変数/クラスで切替） ───────── */
+function applyTransitionMode() {
+  const modes = ['none', 'fade', 'slide-right', 'slide-left', 'scroll'];
+  const chosen = modes.includes(settings.transition) ? settings.transition : 'fade';
+  els.box && modes.forEach(m => els.box.classList.remove('trans-' + m));
+  if (els.box) els.box.classList.add('trans-' + chosen);
+}
+
+/* ───────── AI OSD 整形（TV字幕風） ─────────
+ * Gemini に依頼して、文節区切り・長文途中改行時の「→」付与・見出し除去を
+ * 行う。生テキストから最新N段落を抽出し、変化があった時だけ API を叩く。 */
+
+let _osdAiCache = { inputHash: null, output: null, inFlight: false, debounceTimer: null };
+
+function hashStr(s) {
+  // 簡易ハッシュ（同一入力を検出できればいい）
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h + '.' + s.length;
+}
+
+/** 入力テキストをGeminiに投げてOSD整形。キャッシュ済みならそのまま返す */
+async function formatOsdWithAi(rawText) {
+  if (!rawText || !rawText.trim()) return '';
+  if (!settings.osdAi) return rawText;
+  const apiKey = (function() {
+    try {
+      const raw = localStorage.getItem('dictation:settings');
+      if (!raw) return '';
+      const s = JSON.parse(raw);
+      return s.apiKey || '';
+    } catch { return ''; }
+  })();
+  if (!apiKey) return rawText;
+  if (typeof window.formatForOSDWithGemini !== 'function') return rawText;
+
+  const h = hashStr(rawText);
+  if (_osdAiCache.inputHash === h && _osdAiCache.output != null) return _osdAiCache.output;
+  if (_osdAiCache.inFlight) return _osdAiCache.output || rawText; // 前回結果を暫定表示
+
+  _osdAiCache.inFlight = true;
   try {
-    const rect = els.box.getBoundingClientRect();
-    _pipWindow = await documentPictureInPicture.requestWindow({
-      width: Math.max(320, Math.round(rect.width) || 720),
-      height: Math.max(120, Math.round(rect.height) || 180),
-    });
-
-    // 現ドキュメントのスタイルシートをPiP側へコピー
-    [...document.styleSheets].forEach(ss => {
-      try {
-        if (ss.href) {
-          const link = _pipWindow.document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = ss.href;
-          _pipWindow.document.head.appendChild(link);
-        } else {
-          const style = _pipWindow.document.createElement('style');
-          style.textContent = [...ss.cssRules].map(r => r.cssText).join('\n');
-          _pipWindow.document.head.appendChild(style);
-        }
-      } catch (e) { /* CORSで読めないシートはスキップ */ }
-    });
-    _pipWindow.document.body.classList.add('cap-body', 'pip-mode');
-    _pipWindow.document.title = '字幕（デスクトップオーバーレイ）';
-
-    // 字幕ボックスを PiP に「移動」。DOM参照はそのままなので、
-    // 親JS の storage リスナー → renderLatest が els.text を更新すれば PiP に出る。
-    _pipOriginalParent = els.box.parentElement;
-    _pipOriginalNextSibling = els.box.nextSibling;
-    _pipWindow.document.body.appendChild(els.box);
-
-    // 親ウィンドウは「PiPモード実行中」表示に切り替え（小型UIだけ残す）
-    document.body.classList.add('parent-in-pip');
-
-    // PiP 内の右クリックで通常モードに戻す confirm
-    _pipWindow.document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      if (_pipWindow && _pipWindow.confirm('通常モードに戻しますか？')) {
-        try { _pipWindow.close(); } catch {}
-      }
-    });
-
-    // PiP ウィンドウが閉じたら復元
-    _pipWindow.addEventListener('pagehide', () => {
-      if (_pipOriginalParent) {
-        _pipOriginalParent.insertBefore(els.box, _pipOriginalNextSibling);
-      }
-      document.body.classList.remove('parent-in-pip');
-      _pipWindow = null;
-      _pipOriginalParent = null;
-      _pipOriginalNextSibling = null;
-      if (els.btnPip) els.btnPip.classList.remove('active');
-    });
-
-    if (els.btnPip) els.btnPip.classList.add('active');
+    const out = await window.formatForOSDWithGemini({ apiKey, text: rawText });
+    _osdAiCache.inputHash = h;
+    _osdAiCache.output = out || rawText;
+    return _osdAiCache.output;
   } catch (e) {
-    console.warn('PiP オーバーレイ起動失敗:', e);
-    alert('デスクトップオーバーレイの起動に失敗しました。\n\n' + (e.message || e));
-    _pipWindow = null;
-    document.body.classList.remove('parent-in-pip');
+    console.warn('OSD AI整形失敗:', e.message || e);
+    return rawText;
+  } finally {
+    _osdAiCache.inFlight = false;
   }
 }
 
@@ -531,10 +587,13 @@ function loadActiveSession() {
 /**
  * 対象セッションの transcript HTML から「最新 N 段落の文字列」を取り出して字幕に表示。
  */
+/** 前回レンダリングしたテキストを保持してトランジション判定に使う */
+let _lastRenderedText = '';
+
 function renderLatest() {
   const session = loadActiveSession();
   if (!session) {
-    els.text.innerHTML = '';
+    renderTextIntoBox('');
     els.sessionTitle.textContent = '';
     setStatus('idle', '待機');
     return;
@@ -547,7 +606,6 @@ function renderLatest() {
 
   let paras = Array.from(tmp.querySelectorAll('.paragraph'));
   if (paras.length === 0 && tmp.textContent.trim()) {
-    // .paragraph 構造がない生テキストの場合は、改行で分割
     paras = tmp.textContent.trim().split(/\n{2,}/).map(t => {
       const d = document.createElement('div');
       d.textContent = t;
@@ -559,12 +617,21 @@ function renderLatest() {
   const latest = paras.slice(-n);
 
   if (latest.length === 0) {
-    els.text.innerHTML = '';
+    renderTextIntoBox('');
+  } else if (settings.osdAi) {
+    // AI OSD整形: 生テキスト抽出→Gemini→整形後を描画（デバウンス）
+    const rawText = latest.map(p => cleanRawParagraphText(p)).filter(Boolean).join('\n\n');
+    scheduleOsdAiRender(rawText);
+    // 即座の表示としてAIキャッシュ or 生テキストを出す
+    const immediate = (_osdAiCache.output && _osdAiCache.inputHash === hashStr(rawText))
+      ? _osdAiCache.output
+      : rawText;
+    renderTextIntoBox(textToOsdHtml(immediate));
   } else {
-    els.text.innerHTML = latest.map((p, idx) => {
+    // 通常モード: 段落構造を保って表示
+    const html = latest.map((p, idx) => {
       const isLast = idx === latest.length - 1;
       const cls = 'cap-para' + (isLast ? ' latest' : '');
-      // 段落内に h2（見出し）がある場合は <strong> で強調し見出し感を残す
       const h2 = p.querySelector && p.querySelector('h2');
       if (h2) {
         const heading = escapeHtml(h2.textContent.trim());
@@ -575,20 +642,79 @@ function renderLatest() {
       const text = escapeHtml((p.textContent || '').trim());
       return `<p class="${cls}">${text}</p>`;
     }).join('');
+    renderTextIntoBox(html);
   }
 
   if (settings.followLive) {
-    // 常に最下部へ（最新が見える）
     requestAnimationFrame(() => {
       const sc = els.boxScroll;
       if (sc) sc.scrollTop = sc.scrollHeight;
     });
   }
 
-  // 録音中かどうかの簡易判定: 更新から 15秒以内なら listening 扱い
   const updated = Number(session.updatedAt) || 0;
   const live = Date.now() - updated < 15000;
   setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
+}
+
+/** 1段落分のテキストを綺麗に取り出す（見出しを除外、メタ文を除去） */
+function cleanRawParagraphText(p) {
+  const h2 = p.querySelector && p.querySelector('h2');
+  let src = '';
+  if (h2) {
+    const bodyEl = p.querySelector('.p-body');
+    src = bodyEl ? bodyEl.textContent : ((p.textContent || '').replace(h2.textContent, ''));
+  } else {
+    src = p.textContent || '';
+  }
+  return (src || '')
+    .replace(/（文字起こし中…）|\(音声不明瞭[^)]*\)|\[文字起こし失敗[^\]]*\]|（音声不明瞭・再試行可）/g, '')
+    .trim();
+}
+
+/** AI整形結果のテキスト（改行・→記号を含む）を表示用HTMLに変換 */
+function textToOsdHtml(text) {
+  if (!text) return '';
+  return '<p class="cap-para latest">' +
+    escapeHtml(text)
+      .replace(/→\s*\n/g, '<span class="osd-cont">→</span><br>')  // →改行は継続マーカー
+      .replace(/\n/g, '<br>') +
+    '</p>';
+}
+
+/** renderTextIntoBox: トランジションを適用してテキスト領域を更新 */
+function renderTextIntoBox(html) {
+  if (!els.text) return;
+  if (html === _lastRenderedText) return;          // 無変化ならスキップ
+  _lastRenderedText = html;
+
+  const tType = settings.transition || 'fade';
+  if (tType === 'none') {
+    els.text.innerHTML = html;
+    return;
+  }
+  // CSS アニメーションを一度リセット→適用（再トリガ）
+  els.text.classList.remove('anim-in');
+  void els.text.offsetWidth;
+  els.text.innerHTML = html;
+  els.text.classList.add('anim-in');
+}
+
+/** AI整形リクエストを 1.2秒 デバウンス */
+function scheduleOsdAiRender(rawText) {
+  if (_osdAiCache.debounceTimer) clearTimeout(_osdAiCache.debounceTimer);
+  _osdAiCache.debounceTimer = setTimeout(async () => {
+    const out = await formatOsdWithAi(rawText);
+    if (settings.osdAi) {
+      renderTextIntoBox(textToOsdHtml(out));
+      if (settings.followLive) {
+        requestAnimationFrame(() => {
+          const sc = els.boxScroll;
+          if (sc) sc.scrollTop = sc.scrollHeight;
+        });
+      }
+    }
+  }, 1200);
 }
 
 function setStatus(mode, label) {
@@ -616,17 +742,12 @@ function init() {
   reflectSettingsToUI();
   applySettings();
   applyBox();
+  applyTransitionMode();
   bindSettingsUI();
   bindBoxInteractions();
   bindSync();
   renderLatest();
   document.title = '字幕（ライブキャプション）';
-
-  // 親側「PiPモード中UI」の「通常モードに戻す」ボタン
-  const pipExitBtn = document.getElementById('cap-pip-exit');
-  if (pipExitBtn) pipExitBtn.addEventListener('click', () => {
-    if (_pipWindow) try { _pipWindow.close(); } catch {}
-  });
 }
 
 if (document.readyState === 'loading') {

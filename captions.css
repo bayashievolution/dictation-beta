@@ -333,31 +333,6 @@ select:focus { border-color: var(--cap-accent); }
   background: #000;
 }
 
-/* ───────── PiP（デスクトップオーバーレイ）モード専用 ─────────
- * documentPictureInPicture の別ウィンドウ内ではツールバー等は存在せず、
- * body 直下に .cap-box が置かれる構造。ウィンドウ全域を字幕が埋める。 */
-body.cap-body.pip-mode {
-  background: transparent; /* PiPウィンドウ自体の背景は透明に近くしておく（完全透過はOS仕様で不可） */
-}
-body.cap-body.pip-mode .cap-box {
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  bottom: 0 !important;
-  right: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: none !important;
-  max-height: none !important;
-  transform: none !important;
-  border-radius: 0;
-  margin: 0;
-}
-body.cap-body.pip-mode .cap-resize {
-  /* PiPウィンドウ自体がOSリサイズできるのでハンドルは不要 */
-  display: none !important;
-}
-
 /* ツールバーボタン: アクティブ状態 */
 .cap-tool-btn.active {
   background: rgba(52, 211, 153, 0.2);
@@ -365,73 +340,103 @@ body.cap-body.pip-mode .cap-resize {
   color: #34d399;
 }
 
-/* ───────── 親ウィンドウの「PiPモード実行中」UI ───────── */
-.cap-pip-active {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: var(--cap-ui);
-  z-index: 50;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-body.parent-in-pip .cap-pip-active { display: flex; }
-/* PiP中は元の字幕キャンバス・ツールバー・設定パネルを隠す */
-body.parent-in-pip #cap-canvas,
-body.parent-in-pip #cap-toolbar,
-body.parent-in-pip #cap-settings {
+/* ───────── OSDモード（親ウィンドウ内で字幕以外を非表示） ─────────
+ * ツールバー・設定・点線枠・リサイズハンドル・ドラッグカーソルなどを全部消して
+ * 字幕だけ大きく見せる。右クリック/Escで抜ける。 */
+body.osd-mode #cap-toolbar,
+body.osd-mode #cap-settings,
+body.osd-mode .cap-resize {
   display: none !important;
 }
-.cap-pip-active-inner {
+body.osd-mode .cap-box {
+  cursor: default !important;
+  outline: none !important;
+  box-shadow: none;
+}
+body.osd-mode .cap-box:hover {
+  outline-color: transparent;
+}
+body.osd-mode .cap-session-title,
+body.osd-mode .cap-status {
+  display: none !important;
+}
+
+/* OSDモード開始時の一瞬だけ出るヒント */
+.cap-osd-hint {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 18px 26px;
+  border-radius: 12px;
+  font-size: 14px;
   text-align: center;
-  max-width: 420px;
+  line-height: 1.6;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+  letter-spacing: 0.04em;
 }
-.cap-pip-active-icon {
-  font-size: 56px;
-  margin-bottom: 8px;
-  animation: pipPulse 2s ease-in-out infinite;
+.cap-osd-hint.show { opacity: 1; }
+.cap-osd-hint.fade-out { opacity: 0; }
+.cap-osd-hint strong { color: var(--cap-accent); }
+
+/* ───────── テキストトランジション ─────────
+ * #cap-box-text に trans-* クラスで駆動方針を選ぶ。
+ * 更新時は .anim-in を一旦外して付け直してアニメを再トリガ。 */
+#cap-box-text {
+  will-change: transform, opacity;
 }
-@keyframes pipPulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(0.96); }
+
+/* フェード */
+.cap-box.trans-fade #cap-box-text.anim-in {
+  animation: capFade 0.35s ease-out;
 }
-.cap-pip-active-title {
-  font-size: 22px;
-  font-weight: 600;
+@keyframes capFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* 右からスライド */
+.cap-box.trans-slide-right #cap-box-text.anim-in {
+  animation: capSlideRight 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes capSlideRight {
+  from { transform: translateX(24%); opacity: 0; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+
+/* 左からスライド */
+.cap-box.trans-slide-left #cap-box-text.anim-in {
+  animation: capSlideLeft 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes capSlideLeft {
+  from { transform: translateX(-24%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* 下からスクロール（TV下部字幕風） */
+.cap-box.trans-scroll #cap-box-text.anim-in {
+  animation: capScrollUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes capScrollUp {
+  from { transform: translateY(18%); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* なし: アニメクラスは付くが何も起こらない */
+.cap-box.trans-none #cap-box-text.anim-in { animation: none; }
+
+/* 継続マーカー「→」（文節途中改行を示す） */
+.osd-cont {
   color: var(--cap-accent);
-  margin-bottom: 6px;
+  margin-left: 0.15em;
+  font-weight: 700;
+  opacity: 0.9;
 }
-.cap-pip-active-sub {
-  font-size: 13px;
-  color: var(--cap-text-muted);
-  margin-bottom: 24px;
-}
-.cap-pip-exit-btn {
-  background: var(--cap-accent);
-  color: #0f1916;
-  border: none;
-  border-radius: 999px;
-  padding: 14px 28px;
-  font-size: 15px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.12s, transform 0.12s;
-  box-shadow: 0 4px 14px rgba(52, 211, 153, 0.35);
-}
-.cap-pip-exit-btn:hover {
-  background: #4ee0a8;
-  transform: translateY(-1px);
-}
-.cap-pip-exit-btn:active { transform: translateY(0); }
-.cap-pip-active-note {
-  font-size: 11px;
-  color: var(--cap-text-faint);
-  margin-top: 22px;
-  line-height: 1.7;
-}
-.cap-pip-active-note strong { color: var(--cap-text); }
 
 /* ───────── 配信モード（OBS用） ─────────
  * body 全体をキー色（既定マゼンタ）にして、OBSのカラーキーで抜けば

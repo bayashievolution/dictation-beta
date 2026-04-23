@@ -516,8 +516,50 @@ function blobToBase64(blob) {
   });
 }
 
+/**
+ * OSD（テレビ字幕風）向けに文字起こしを整形する。
+ * 文節で改行、長すぎる文は途中改行しつつ前の行末に「→」を付与。
+ * 見出しやフィラー・メタ文は削除。
+ */
+async function formatForOSDWithGemini({ apiKey, text }) {
+  if (!apiKey) throw new Error('Gemini API キーが設定されていません');
+  if (!text || !text.trim()) return '';
+
+  const instruction = [
+    'あなたは聴覚障害のある方向けのTV字幕編集者です。',
+    '以下の文字起こしテキストを、1行表示のOSD字幕にふさわしい形に整形してください。',
+    '',
+    'ルール:',
+    '- 文節（意味のかたまり）区切りで改行を入れて読みやすく',
+    '- 1行が長すぎる場合は適切な位置で改行',
+    '- 文節の途中で改行する場合は、行末に「→」を付けて継続を示す（TV字幕と同じルール）',
+    '- 各行は 30〜40 文字以内を目安（日本語テレビ字幕の標準）',
+    '- 「## 見出し」などのMarkdown見出しは削除して本文だけ出力',
+    '- 「（文字起こし中…）」「（音声不明瞭）」等のメタ表記は削除',
+    '- フィラー（えー、あのー、まぁ、んー）は削除',
+    '- 句読点「、。」は維持',
+    '- 意味を変えない。推測で内容を足さない',
+    '- 出力は整形後の字幕テキストのみ。前置き・説明・コードブロックは一切付けない',
+  ].join('\n');
+
+  const body = {
+    system_instruction: { parts: [{ text: instruction }] },
+    contents: [{ role: 'user', parts: [{ text: text.slice(0, 2400) }] }],
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens: 1024,
+      responseMimeType: 'text/plain',
+    },
+  };
+
+  const out = await _callGemini(body, apiKey, { maxRetries: 1 });
+  return (out || '').trim();
+}
+
 window.refineWithGemini = refineWithGemini;
 window.summarizeWithGemini = summarizeWithGemini;
 window.generateTitleWithGemini = generateTitleWithGemini;
 window.chatWithGemini = chatWithGemini;
 window.transcribeAudioWithGemini = transcribeAudioWithGemini;
+window.formatForOSDWithGemini = formatForOSDWithGemini;

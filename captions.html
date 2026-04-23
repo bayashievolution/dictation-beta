@@ -7,23 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.12.3" />
+  <link rel="stylesheet" href="captions.css?v=0.12.4" />
 </head>
 <body class="cap-body">
-  <!-- PiPモード実行中に親ウィンドウに表示される UI（通常時は hidden） -->
-  <div id="cap-pip-active" class="cap-pip-active">
-    <div class="cap-pip-active-inner">
-      <div class="cap-pip-active-icon">🖼</div>
-      <div class="cap-pip-active-title">PiPモード実行中</div>
-      <div class="cap-pip-active-sub">字幕はフローティングウィンドウに表示中</div>
-      <button id="cap-pip-exit" class="cap-pip-exit-btn">🪟 通常モードに戻す</button>
-      <p class="cap-pip-active-note">
-        PiPウィンドウ内で<strong>右クリック</strong>からも戻せます。<br>
-        PiP窓を閉じれば自動で通常モードに復帰します。
-      </p>
-    </div>
-  </div>
-
   <div id="cap-canvas">
     <div id="cap-box" class="cap-box">
       <!-- スクロールする内側ラッパ。リサイズハンドルはこの外（cap-box直下）に置いて
@@ -47,7 +33,8 @@
     <div class="cap-tool-right">
       <button id="cap-btn-settings" class="cap-tool-btn" title="表示設定">⚙</button>
       <button id="cap-btn-fullscreen" class="cap-tool-btn" title="全画面">⛶</button>
-      <button id="cap-btn-pip" class="cap-tool-btn" title="PiPモード（このウィンドウを常に最前面に浮くフローティングウィンドウに変形／右クリックで元に戻る）">🖼</button>
+      <button id="cap-btn-fit" class="cap-tool-btn" title="字幕ボックスをウィンドウ全体に広げて中央配置">⊞</button>
+      <button id="cap-btn-osd" class="cap-tool-btn" title="OSDモード（UIを隠して字幕だけを大きく表示／右クリックで復帰）">📺</button>
       <button id="cap-btn-reset-pos" class="cap-tool-btn" title="字幕ボックスの位置とサイズをリセット">⟳</button>
     </div>
   </div>
@@ -151,6 +138,28 @@
         </label>
       </div>
 
+      <div class="cap-field cap-osd-section">
+        <label class="cap-toggle">
+          <input type="checkbox" id="cap-osd-ai" />
+          <span><strong>AIでOSD用に整形（TV字幕風）</strong></span>
+        </label>
+        <small class="cap-hint">
+          文節で改行、長い文は途中改行に「<strong>→</strong>」。見出しや「(文字起こし中…)」等を除去。
+          更新のたびに Gemini を呼ぶのでAPI利用量が少し増えます（2〜3秒に1回デバウンス）。
+        </small>
+      </div>
+
+      <div class="cap-field">
+        <label class="cap-label">テキスト表示のトランジション</label>
+        <select id="cap-transition">
+          <option value="none">なし（即切替）</option>
+          <option value="fade" selected>フェードイン/アウト</option>
+          <option value="slide-right">右からスライド</option>
+          <option value="slide-left">左からスライド</option>
+          <option value="scroll">下からスクロール</option>
+        </select>
+      </div>
+
       <div class="cap-field cap-broadcast-section">
         <label class="cap-toggle cap-broadcast-toggle">
           <input type="checkbox" id="cap-broadcast-mode" />
@@ -174,6 +183,7 @@
     </div>
   </aside>
 
-  <script src="captions.js?v=0.12.3"></script>
+  <script src="gemini.js?v=0.12.4"></script>
+  <script src="captions.js?v=0.12.4"></script>
 </body>
 </html>
