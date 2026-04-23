@@ -365,6 +365,74 @@ body.cap-body.pip-mode .cap-resize {
   color: #34d399;
 }
 
+/* ───────── 親ウィンドウの「PiPモード実行中」UI ───────── */
+.cap-pip-active {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--cap-ui);
+  z-index: 50;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+body.parent-in-pip .cap-pip-active { display: flex; }
+/* PiP中は元の字幕キャンバス・ツールバー・設定パネルを隠す */
+body.parent-in-pip #cap-canvas,
+body.parent-in-pip #cap-toolbar,
+body.parent-in-pip #cap-settings {
+  display: none !important;
+}
+.cap-pip-active-inner {
+  text-align: center;
+  max-width: 420px;
+}
+.cap-pip-active-icon {
+  font-size: 56px;
+  margin-bottom: 8px;
+  animation: pipPulse 2s ease-in-out infinite;
+}
+@keyframes pipPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.96); }
+}
+.cap-pip-active-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--cap-accent);
+  margin-bottom: 6px;
+}
+.cap-pip-active-sub {
+  font-size: 13px;
+  color: var(--cap-text-muted);
+  margin-bottom: 24px;
+}
+.cap-pip-exit-btn {
+  background: var(--cap-accent);
+  color: #0f1916;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.12s;
+  box-shadow: 0 4px 14px rgba(52, 211, 153, 0.35);
+}
+.cap-pip-exit-btn:hover {
+  background: #4ee0a8;
+  transform: translateY(-1px);
+}
+.cap-pip-exit-btn:active { transform: translateY(0); }
+.cap-pip-active-note {
+  font-size: 11px;
+  color: var(--cap-text-faint);
+  margin-top: 22px;
+  line-height: 1.7;
+}
+.cap-pip-active-note strong { color: var(--cap-text); }
+
 /* ───────── 配信モード（OBS用） ─────────
  * body 全体をキー色（既定マゼンタ）にして、OBSのカラーキーで抜けば
  * 透過背景 + 文字 + 影 だけが残る。ただしUIパーツ（ツールバー等）は
