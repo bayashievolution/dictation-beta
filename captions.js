@@ -78,10 +78,12 @@ const els = {
   canvas: document.getElementById('cap-canvas'),
   box: document.getElementById('cap-box'),
   text: document.getElementById('cap-box-text'),
+  boxScroll: document.getElementById('cap-box-scroll'),
   status: document.getElementById('cap-status'),
   sessionTitle: document.getElementById('cap-session-title'),
   btnSettings: document.getElementById('cap-btn-settings'),
   btnFullscreen: document.getElementById('cap-btn-fullscreen'),
+  btnPip: document.getElementById('cap-btn-pip'),
   btnResetPos: document.getElementById('cap-btn-reset-pos'),
   settings: document.getElementById('cap-settings'),
   settingsClose: document.getElementById('cap-settings-close'),
@@ -186,12 +188,14 @@ function applyBroadcastPreset() {
 
 function applyBox() {
   const b = box;
+  // 位置
   if (Number.isFinite(b.left)) els.box.style.left = b.left + 'px';
   else els.box.style.left = '';
   if (Number.isFinite(b.top)) els.box.style.top = b.top + 'px';
   else els.box.style.top = '';
-  if (Number.isFinite(b.width)) els.box.style.width = b.width + 'px';
-  if (Number.isFinite(b.height)) els.box.style.height = b.height + 'px';
+  // サイズ（未指定なら inline style をクリアしてCSS デフォルトに戻す）
+  els.box.style.width = Number.isFinite(b.width) ? (b.width + 'px') : '';
+  els.box.style.height = Number.isFinite(b.height) ? (b.height + 'px') : '';
   // left を直接指定したら translate を外す（デフォルトは中央寄せのために使われている）
   if (Number.isFinite(b.left)) {
     els.box.style.transform = 'none';
@@ -205,6 +209,13 @@ function applyBox() {
 function resetBox() {
   box = { ...DEFAULT_BOX };
   saveBox(box);
+  // inline styleを明示的に全部クリア → CSS 側の %幅・中央寄せ translate に戻る
+  els.box.style.left = '';
+  els.box.style.top = '';
+  els.box.style.width = '';
+  els.box.style.height = '';
+  els.box.style.transform = '';
+  els.box.style.bottom = '';
   applyBox();
 }
 
@@ -316,10 +327,86 @@ function bindSettingsUI() {
     } catch (e) { console.warn('fullscreen failed', e); }
   });
 
+  // デスクトップオーバーレイ（Document Picture-in-Picture）
+  if (els.btnPip) {
+    els.btnPip.addEventListener('click', togglePipOverlay);
+  }
+
   els.btnResetPos.addEventListener('click', () => {
     if (!confirm('字幕ボックスの位置とサイズを初期値に戻しますか？')) return;
     resetBox();
   });
+}
+
+/* ───────── デスクトップオーバーレイ（Document Picture-in-Picture） ─────────
+ * Chrome 116+ の documentPictureInPicture API を使って、Chromeウィンドウを
+ * 最小化しても他アプリの上に浮き続ける小窓に字幕ボックスを移す。
+ * これで Zoom / Meet / 授業スライド等の前面に字幕が出せる（OS制約で完全
+ * 透過背景には出来ないが、位置・サイズ自由、常に最前面）。 */
+
+let _pipWindow = null;
+let _pipOriginalParent = null;
+let _pipOriginalNextSibling = null;
+
+async function togglePipOverlay() {
+  if (_pipWindow) {
+    try { _pipWindow.close(); } catch {}
+    return;
+  }
+  if (!('documentPictureInPicture' in window)) {
+    alert('このブラウザではデスクトップオーバーレイ（Document Picture-in-Picture）に対応していません。\n\nChrome 116以上で試してください。');
+    return;
+  }
+  try {
+    const rect = els.box.getBoundingClientRect();
+    _pipWindow = await documentPictureInPicture.requestWindow({
+      width: Math.max(320, Math.round(rect.width) || 720),
+      height: Math.max(120, Math.round(rect.height) || 180),
+    });
+
+    // 現ドキュメントのスタイルシートをPiP側へコピー
+    [...document.styleSheets].forEach(ss => {
+      try {
+        if (ss.href) {
+          const link = _pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = ss.href;
+          _pipWindow.document.head.appendChild(link);
+        } else {
+          const style = _pipWindow.document.createElement('style');
+          style.textContent = [...ss.cssRules].map(r => r.cssText).join('\n');
+          _pipWindow.document.head.appendChild(style);
+        }
+      } catch (e) { /* CORS等でアクセスできないシートは諦める */ }
+    });
+    // body にも cap-body クラスを付与（背景色などの前提）
+    _pipWindow.document.body.classList.add('cap-body', 'pip-mode');
+    // PiP 側の <title>
+    _pipWindow.document.title = '字幕（デスクトップオーバーレイ）';
+
+    // 字幕ボックスを現ウィンドウから PiP ウィンドウに「移動」
+    // （MOVE なのでイベントリスナー・state 参照は全部そのまま動く）
+    _pipOriginalParent = els.box.parentElement;
+    _pipOriginalNextSibling = els.box.nextSibling;
+    _pipWindow.document.body.appendChild(els.box);
+
+    // PiP ウィンドウが閉じられたら元の位置に戻す
+    _pipWindow.addEventListener('pagehide', () => {
+      if (_pipOriginalParent) {
+        _pipOriginalParent.insertBefore(els.box, _pipOriginalNextSibling);
+      }
+      _pipWindow = null;
+      _pipOriginalParent = null;
+      _pipOriginalNextSibling = null;
+      if (els.btnPip) els.btnPip.classList.remove('active');
+    });
+
+    if (els.btnPip) els.btnPip.classList.add('active');
+  } catch (e) {
+    console.warn('PiP オーバーレイ起動失敗:', e);
+    alert('デスクトップオーバーレイの起動に失敗しました。\n\n' + (e.message || e));
+    _pipWindow = null;
+  }
 }
 
 /* ───────── ドラッグ・リサイズ ───────── */
@@ -479,7 +566,10 @@ function renderLatest() {
 
   if (settings.followLive) {
     // 常に最下部へ（最新が見える）
-    requestAnimationFrame(() => { els.box.scrollTop = els.box.scrollHeight; });
+    requestAnimationFrame(() => {
+      const sc = els.boxScroll;
+      if (sc) sc.scrollTop = sc.scrollHeight;
+    });
   }
 
   // 録音中かどうかの簡易判定: 更新から 15秒以内なら listening 扱い

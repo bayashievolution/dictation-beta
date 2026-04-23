@@ -7,13 +7,17 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.12.0" />
+  <link rel="stylesheet" href="captions.css?v=0.12.1" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
     <div id="cap-box" class="cap-box">
-      <div id="cap-box-text">録音を開始すると字幕が表示されます</div>
-      <!-- リサイズハンドル -->
+      <!-- スクロールする内側ラッパ。リサイズハンドルはこの外（cap-box直下）に置いて
+           スクロールと一緒に消えないようにする -->
+      <div id="cap-box-scroll" class="cap-box-scroll">
+        <div id="cap-box-text">録音を開始すると字幕が表示されます</div>
+      </div>
+      <!-- リサイズハンドル: 四隅に絶対配置、スクロールに影響されない -->
       <div class="cap-resize cap-resize-br" data-resize="br"></div>
       <div class="cap-resize cap-resize-tl" data-resize="tl"></div>
       <div class="cap-resize cap-resize-tr" data-resize="tr"></div>
@@ -29,6 +33,7 @@
     <div class="cap-tool-right">
       <button id="cap-btn-settings" class="cap-tool-btn" title="表示設定">⚙</button>
       <button id="cap-btn-fullscreen" class="cap-tool-btn" title="全画面">⛶</button>
+      <button id="cap-btn-pip" class="cap-tool-btn" title="デスクトップオーバーレイ（常に最前面・他アプリの上に浮く）">🖼</button>
       <button id="cap-btn-reset-pos" class="cap-tool-btn" title="字幕ボックスの位置とサイズをリセット">⟳</button>
     </div>
   </div>
@@ -155,6 +160,6 @@
     </div>
   </aside>
 
-  <script src="captions.js?v=0.12.0"></script>
+  <script src="captions.js?v=0.12.1"></script>
 </body>
 </html>

@@ -48,7 +48,9 @@ body.cap-body {
   overflow: hidden;
 }
 
-/* 字幕ボックス: ドラッグ移動、四隅でリサイズ可能 */
+/* 字幕ボックス: ドラッグ移動、四隅でリサイズ可能。
+ * 外枠は overflow visible でリサイズハンドルがスクロールに引っ張られないようにする。
+ * 実際のスクロールは内側の .cap-box-scroll が担当。 */
 .cap-box {
   position: absolute;
   left: 50%;
@@ -59,24 +61,40 @@ body.cap-body {
   max-width: calc(100% - 32px);
   max-height: calc(100% - 120px);
   width: 80%;
-  padding: 28px 36px;
   background: var(--cap-bg-color);
   border-radius: 14px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   cursor: grab;
   touch-action: none;
-  /* スクロールバー */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.3) transparent;
-  transition: outline 0.15s;
+  display: flex;
+  flex-direction: column;
+
+  /* 点線枠のチラつき防止: 初期から 1px dashed transparent を持たせておき、
+     hoverで色だけ変える。widthの0→1px補間が走らないので白フラッシュが起きない。 */
+  outline: 1px dashed transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.18s ease-out;
 }
-.cap-box::-webkit-scrollbar { width: 8px; height: 8px; }
-.cap-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
-.cap-box::-webkit-scrollbar-track { background: transparent; }
+.cap-box:hover {
+  outline-color: rgba(255, 255, 255, 0.25);
+}
 .cap-box:active { cursor: grabbing; }
 .cap-box.resizing { cursor: nwse-resize !important; }
-.cap-box:hover { outline: 1px dashed rgba(255, 255, 255, 0.25); outline-offset: -1px; }
+
+/* 内側スクロール領域 */
+.cap-box-scroll {
+  flex: 1;
+  min-height: 0;       /* flex child が overflow を正しく起こすため必須 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 28px 36px;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.3) transparent;
+}
+.cap-box-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.cap-box-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
+.cap-box-scroll::-webkit-scrollbar-track { background: transparent; }
 
 #cap-box-text {
   font-family: var(--cap-font-family);
@@ -106,7 +124,9 @@ body.cap-body {
   font-size: 0.6em;
 }
 
-/* リサイズハンドル（四隅） */
+/* リサイズハンドル（四隅）:
+ * .cap-box の直下（.cap-box-scrollの兄弟）に置くため、スクロールに影響されず
+ * 常にボックスの四隅に張り付く。小さいボックスでも確実に掴める。 */
 .cap-resize {
   position: absolute;
   width: 20px;
@@ -114,8 +134,9 @@ body.cap-body {
   cursor: nwse-resize;
   opacity: 0;
   transition: opacity 0.15s;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.18);
   border-radius: 3px;
+  z-index: 2;      /* スクロール内テキストより前 */
 }
 .cap-box:hover .cap-resize { opacity: 1; }
 .cap-resize-tl { top: 4px; left: 4px; cursor: nwse-resize; }
@@ -310,6 +331,38 @@ select:focus { border-color: var(--cap-accent); }
 /* 全画面時は余分な余白を削る */
 :fullscreen body.cap-body, body.cap-body:fullscreen {
   background: #000;
+}
+
+/* ───────── PiP（デスクトップオーバーレイ）モード専用 ─────────
+ * documentPictureInPicture の別ウィンドウ内ではツールバー等は存在せず、
+ * body 直下に .cap-box が置かれる構造。ウィンドウ全域を字幕が埋める。 */
+body.cap-body.pip-mode {
+  background: transparent; /* PiPウィンドウ自体の背景は透明に近くしておく（完全透過はOS仕様で不可） */
+}
+body.cap-body.pip-mode .cap-box {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 0;
+  margin: 0;
+}
+body.cap-body.pip-mode .cap-resize {
+  /* PiPウィンドウ自体がOSリサイズできるのでハンドルは不要 */
+  display: none !important;
+}
+
+/* ツールバーボタン: アクティブ状態 */
+.cap-tool-btn.active {
+  background: rgba(52, 211, 153, 0.2);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #34d399;
 }
 
 /* ───────── 配信モード（OBS用） ─────────
