@@ -2675,6 +2675,12 @@ function enablePointerDragSort(list, opts) {
       didReorder = true;
       const cb = getOpts().onReorder;
       if (cb) cb(newOrder);
+
+      // ドラッグで並び順が変わったら、アクティブ線（下のスライド指示線）の
+      // 位置が古いままになるので、FLIPアニメ完了後に再計算
+      if (typeof updateActiveTabIndicator === 'function') {
+        setTimeout(() => updateActiveTabIndicator(), 340);
+      }
     }
     clearHighlights();
     try { list.releasePointerCapture(pointerId); } catch {}
@@ -3174,6 +3180,141 @@ function closeSession(id) {
   renderTabs();
 }
 
+/* ───────── タブの一括閉じ（Chrome タブ風） ───────── */
+
+/** 指定したIDのリストを一括削除。中身ありは件数付きまとめ確認 */
+function closeMultipleSessions(ids, { skipConfirm = false } = {}) {
+  const targets = ids.map(id => state.sessions.find(s => s.id === id)).filter(Boolean);
+  if (targets.length === 0) return;
+  const withContent = targets.filter(s => s.transcript || s.memo || s.summary);
+  if (!skipConfirm && withContent.length > 0) {
+    const msg = withContent.length === targets.length
+      ? `${targets.length}個のタブを閉じます。内容はすべて削除されます。よろしいですか？`
+      : `${targets.length}個のタブを閉じます（うち${withContent.length}個に内容あり、削除されます）。よろしいですか？`;
+    if (!confirm(msg)) return;
+  }
+  // 録音対象が含まれるなら先に停止
+  if (state.isRecording && targets.some(s => s.id === state.recordingSessionId)) {
+    stopRecording();
+  }
+  const activeIsTarget = targets.some(s => s.id === state.activeId);
+  const idSet = new Set(targets.map(s => s.id));
+  state.sessions = state.sessions.filter(s => !idSet.has(s.id));
+  if (state.sessions.length === 0) {
+    createSession({ activate: true, skipSave: true });
+  } else if (activeIsTarget) {
+    // 活性なセッションが消えたら、なるべく近い位置のタブを活性化
+    state.activeId = state.sessions[0].id;
+    loadActiveSessionIntoDOM();
+  }
+  state.selectedTabIds = new Set();
+  state.selectionAnchorId = null;
+  persistSessions();
+  renderTabs();
+}
+
+function closeTabsToLeft(pivotId) {
+  const idx = state.sessions.findIndex(s => s.id === pivotId);
+  if (idx <= 0) return;
+  closeMultipleSessions(state.sessions.slice(0, idx).map(s => s.id));
+}
+
+function closeTabsToRight(pivotId) {
+  const idx = state.sessions.findIndex(s => s.id === pivotId);
+  if (idx < 0 || idx >= state.sessions.length - 1) return;
+  closeMultipleSessions(state.sessions.slice(idx + 1).map(s => s.id));
+}
+
+function closeOtherTabs(pivotId) {
+  const others = state.sessions.filter(s => s.id !== pivotId).map(s => s.id);
+  if (others.length === 0) return;
+  closeMultipleSessions(others);
+}
+
+function closeAllTabs() {
+  const all = state.sessions.map(s => s.id);
+  if (all.length === 0) return;
+  closeMultipleSessions(all);
+}
+
+/* ───────── タブ右クリック／長押しのコンテキストメニュー ───────── */
+
+function hideTabContextMenu() {
+  const menu = document.getElementById('tab-context-menu');
+  if (menu) menu.classList.add('hidden');
+}
+
+function showTabContextMenu(sessionId, clientX, clientY) {
+  let menu = document.getElementById('tab-context-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'tab-context-menu';
+    menu.className = 'context-menu hidden';
+    document.body.appendChild(menu);
+    // 初回だけ外側クリック/Escで閉じるリスナーを設置
+    document.addEventListener('click', (e) => {
+      if (!menu.contains(e.target)) hideTabContextMenu();
+    }, true);
+    document.addEventListener('contextmenu', (e) => {
+      // このメニュー上での右クリックは許容、それ以外は別の場所でのcontextmenuで閉じる
+      if (!menu.contains(e.target)) hideTabContextMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !menu.classList.contains('hidden')) hideTabContextMenu();
+    });
+  }
+  const idx = state.sessions.findIndex(s => s.id === sessionId);
+  const hasLeft = idx > 0;
+  const hasRight = idx >= 0 && idx < state.sessions.length - 1;
+  const hasOthers = state.sessions.length > 1;
+
+  const items = [
+    { label: 'このタブを閉じる', icon: 'x', onClick: () => closeSession(sessionId) },
+    { sep: true },
+    { label: '左のタブをすべて閉じる', icon: 'chevron-left', disabled: !hasLeft, onClick: () => closeTabsToLeft(sessionId) },
+    { label: '右のタブをすべて閉じる', icon: 'chevron-right', disabled: !hasRight, onClick: () => closeTabsToRight(sessionId) },
+    { label: '他のタブをすべて閉じる', icon: 'trash', disabled: !hasOthers, onClick: () => closeOtherTabs(sessionId) },
+    { sep: true },
+    { label: 'すべてのタブを閉じる', icon: 'trash', onClick: () => closeAllTabs(), danger: true },
+  ];
+
+  menu.innerHTML = '';
+  for (const it of items) {
+    if (it.sep) {
+      const sep = document.createElement('div');
+      sep.className = 'context-menu-sep';
+      menu.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'context-menu-item' + (it.danger ? ' danger' : '');
+    btn.disabled = !!it.disabled;
+    btn.innerHTML = `<span class="cm-icon" data-icon="${it.icon}"></span><span class="cm-label">${it.label}</span>`;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideTabContextMenu();
+      if (!it.disabled) it.onClick();
+    });
+    menu.appendChild(btn);
+  }
+  renderIcons(menu);
+
+  // 画面端を超えないよう位置を調整
+  menu.style.visibility = 'hidden';
+  menu.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let x = clientX, y = clientY;
+    if (x + rect.width > vw - 4) x = Math.max(4, vw - rect.width - 4);
+    if (y + rect.height > vh - 4) y = Math.max(4, vh - rect.height - 4);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.style.visibility = '';
+  });
+}
+
 function renameSession(id, title) {
   const s = state.sessions.find(x => x.id === id);
   if (!s) return;
@@ -3215,6 +3356,12 @@ function renderTabs() {
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       closeSession(session.id);
+    });
+
+    // 右クリック（またはタッチ長押し後のcontextmenu）でタブメニュー
+    tab.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showTabContextMenu(session.id, e.clientX, e.clientY);
     });
 
     tab.addEventListener('click', (e) => {

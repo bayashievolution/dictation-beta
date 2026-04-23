@@ -406,17 +406,11 @@ html, body {
   /* 録音中の色は .tab-active-indicator.recording に移譲 */
 }
 
-/* 複数選択中（Ctrl/Shiftクリック）: 非アクティブだが選択されているタブを強調。
- * アクセント色の半透明バックグラウンド＋薄い枠で「選んだ感」を出す。 */
-.tab.selected:not(.active) {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.4);
-}
-.tab.selected.active {
-  /* activeの見た目を保ちつつ、選択グループの一部であることを枠で示す */
-  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.5);
-}
+/* 複数選択中は視覚的な色ハイライトを出さない（ドラッグ後のずれ表示対策）。
+ * ドラッグ可能な操作は内部の selectedTabIds セットで機能するが、
+ * 外観上の目印は出さず、単体クリックでアクティブ指示線のみが戻る運用。 */
+.tab.selected:not(.active) { /* 非表示に保つ */ }
+.tab.selected.active { /* 非表示に保つ */ }
 
 .tab {
   position: relative;
@@ -707,6 +701,77 @@ html, body {
 .drag-ghost {
   pointer-events: none;
 }
+
+/* ───────── タブ右クリックのコンテキストメニュー ───────── */
+.context-menu {
+  position: fixed;
+  z-index: 2100;
+  min-width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 6px;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+  animation: context-menu-in 0.14s ease-out;
+}
+@keyframes context-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.context-menu.hidden { display: none; }
+.context-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.context-menu-item:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+.context-menu-item:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.context-menu-item.danger {
+  color: #fca5a5;
+}
+.context-menu-item.danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+}
+.context-menu-item .cm-icon {
+  display: inline-flex;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.context-menu-item.danger .cm-icon {
+  color: #fca5a5;
+}
+.context-menu-item .cm-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.context-menu-item .cm-label { flex: 1; }
+
 /* 複数選択でドラッグ中の件数バッジ（ゴーストに右上に重ねて表示） */
 .drag-ghost-badge {
   position: absolute;
