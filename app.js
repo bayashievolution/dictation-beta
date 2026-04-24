@@ -614,6 +614,9 @@ async function refineUnstructuredInTranscript({ force = false, showFeedback = tr
   });
   if (unstructuredNodes.length === 0) return;
 
+  // 破壊的操作: Undo スナップショットを取る（force 指定時のみ、つまり手動クリック時）
+  if (force) pushUndo('貼付けテキスト整形');
+
   // テキストを集めて改行で結合
   const rawText = unstructuredNodes.map(n => {
     if (n.nodeType === Node.TEXT_NODE) return n.textContent;
@@ -732,13 +735,21 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
     return;
   }
 
-  // Gemini 2.5 Flash の出力上限は 8192 tokens（日本語で約6000〜8000字）。
-  // 18000字を超えたら出力切れリスクが高いので警告、30000字以上は中止推奨。
-  if (allText.length > 30000) {
-    if (!confirm(`文字起こしが ${allText.length} 文字もあります。Geminiの1回出力上限を大きく超えるので、後半が切れます。\n\n録音をいくつかに分けて整形するのがおすすめ。それでも試しますか？`)) return;
-  } else if (allText.length > 18000) {
-    if (!confirm(`文字起こしが ${allText.length} 文字あります。出力が途中で切れる可能性があります。\n\n続けますか？`)) return;
-  }
+  // 常時確認ダイアログ（破壊的操作。Undoで戻せる旨も明記）
+  const lengthStr = allText.length.toLocaleString();
+  const willChunk = allText.length > 5000;
+  const chunkNote = willChunk
+    ? `\n\n⚠️ 長文のため、段落境界で分割して順次整形します（約${Math.ceil(allText.length / 3000)}チャンク、各 3000字 目安）。`
+    : '';
+  if (!confirm(
+    `現在の文字起こし ${lengthStr} 文字を、見出し付きで再整形します。\n` +
+    `既存のパラグラフ構造は置き換わります。${chunkNote}\n\n` +
+    `もし結果がおかしければ「戻す」（Ctrl+Z）で元に戻せます。\n\n` +
+    `続けますか？`
+  )) return;
+
+  // 破壊的操作なので Undo スナップショット
+  pushUndo('全体整形');
 
   // 全部消して refining プレースホルダを置く
   paragraphs.forEach(p => p.remove());
@@ -756,16 +767,20 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
     persistSessions();
   };
   if (inBg) syncBgToSession(); else autoScroll();
-  diagLog.info(`全体整形開始: ${allText.length}字`);
+  diagLog.info(`全体整形開始: ${allText.length}字${willChunk ? '（チャンク分割）' : ''}`);
 
   try {
-    // Gemini 2.5 Flash の出力上限いっぱい（8192 tokens）まで使って長文対応
-    const refined = await refineWithGemini({
-      apiKey: state.settings.apiKey,
-      context: '',              // 全体が1回分のコンテキスト
-      newChunk: allText,
-      maxOutputTokens: 8192,    // 既定の2048 → 8192 に引き上げ（6000〜8000字出せる）
-    });
+    let refined;
+    if (willChunk) {
+      refined = await refineByChunks(allText, target);
+    } else {
+      refined = await refineWithGemini({
+        apiKey: state.settings.apiKey,
+        context: '',
+        newChunk: allText,
+        maxOutputTokens: 8192,
+      });
+    }
     target.className = 'paragraph refined';
     setParagraphContent(target, refined || allText);
     persist();
@@ -782,6 +797,55 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
                                   state.isRecording ? '録音中' : '停止'), 4000);
     }
   }
+}
+
+/**
+ * 長文を段落境界（\n\n）で約3000字のチャンクに分け、
+ * 順次 Gemini で整形。直前チャンクの末尾を context に渡して文脈連続を保つ。
+ * 出力切れ（maxOutputTokens超過）を確実に回避。
+ */
+async function refineByChunks(fullText, progressTargetEl) {
+  const CHUNK_SIZE = 3000;
+  const paragraphs = fullText.split(/\n\n+/);
+  // まず段落を束ねて ~CHUNK_SIZE のブロックにする
+  const blocks = [];
+  let buf = '';
+  for (const p of paragraphs) {
+    if (buf.length + p.length + 2 > CHUNK_SIZE && buf.length > 0) {
+      blocks.push(buf);
+      buf = p;
+    } else {
+      buf = buf ? buf + '\n\n' + p : p;
+    }
+  }
+  if (buf) blocks.push(buf);
+
+  const results = [];
+  let prevTail = '';
+  for (let i = 0; i < blocks.length; i++) {
+    diagLog.info(`全体整形: チャンク ${i + 1}/${blocks.length} (${blocks[i].length}字)`);
+    if (progressTargetEl) {
+      const body = progressTargetEl.querySelector('.p-body');
+      if (body) body.textContent = `（全体整形中… ${i + 1}/${blocks.length}チャンク処理中）`;
+    }
+    try {
+      const out = await refineWithGemini({
+        apiKey: state.settings.apiKey,
+        context: prevTail.slice(-500),  // 直前チャンクの末尾500字だけ文脈として
+        newChunk: blocks[i],
+        maxOutputTokens: 4096,           // チャンク単位なので 4k で十分
+      });
+      const outClean = (out || blocks[i]).trim();
+      results.push(outClean);
+      prevTail = outClean;
+    } catch (e) {
+      console.warn(`[refine chunk ${i + 1}] failed:`, e.message || e);
+      // チャンクが失敗したら原文をそのまま入れて次へ
+      results.push(blocks[i]);
+      prevTail = blocks[i];
+    }
+  }
+  return results.join('\n\n');
 }
 
 /* ───────── ミドル整形（短チャンクを蓄積→文脈込みで再整形＋見出し付与） ─────────
@@ -2173,7 +2237,7 @@ async function loadFromFile(file) {
   }
 }
 
-function clearPane(paneId, { confirmFirst = true } = {}) {
+function clearPane(paneId, { confirmFirst = true, skipUndo = false } = {}) {
   const label = PANE_META[paneId]?.label || paneId;
   const hasContent = paneId === 'pane-transcript' ? !!getConfirmedText()
     : paneId === 'pane-memo' ? !!getMemoText()
@@ -2181,7 +2245,8 @@ function clearPane(paneId, { confirmFirst = true } = {}) {
     : paneId === 'pane-chat' ? !!getChatText()
     : false;
   if (!hasContent) return;
-  if (confirmFirst && !confirm(`「${label}」をクリアしますか？`)) return;
+  if (confirmFirst && !confirm(`「${label}」をクリアしますか？\n\nCtrl+Z で戻せます。`)) return;
+  if (!skipUndo) pushUndo(`クリア: ${label}`);
   if (paneId === 'pane-transcript') {
     els.confirmed.innerHTML = '';
     els.interim.textContent = '';
@@ -2205,11 +2270,94 @@ function clearPane(paneId, { confirmFirst = true } = {}) {
 
 function clearAllPanes() {
   if (!hasAnyContent()) return;
-  if (!confirm('このセッションの4タブ（文字起こし・メモ・要約・質問）をすべてクリアしますか？')) return;
-  clearPane('pane-transcript', { confirmFirst: false });
-  clearPane('pane-memo', { confirmFirst: false });
-  clearPane('pane-summary', { confirmFirst: false });
-  clearPane('pane-chat', { confirmFirst: false });
+  if (!confirm('このセッションの4タブ（文字起こし・メモ・要約・質問）をすべてクリアしますか？\n\nCtrl+Z（Undo）で元に戻せます。')) return;
+  pushUndo('全タブクリア');
+  clearPane('pane-transcript', { confirmFirst: false, skipUndo: true });
+  clearPane('pane-memo',       { confirmFirst: false, skipUndo: true });
+  clearPane('pane-summary',    { confirmFirst: false, skipUndo: true });
+  clearPane('pane-chat',       { confirmFirst: false, skipUndo: true });
+}
+
+/* ───────── Undo（AI整形・クリア・全置換などの破壊的操作を元に戻す） ─────────
+ * セッションの transcript/memo/summary/chat をスナップショットして
+ * localStorage に永続化。Ctrl+Z または「戻す」ボタンで pop＆適用する。 */
+const UNDO_STACK_KEY = 'dictation:undoStack';
+const MAX_UNDO_ENTRIES = 10;
+
+let undoStack = (function loadUndoInit() {
+  try { return JSON.parse(localStorage.getItem(UNDO_STACK_KEY) || '[]'); } catch { return []; }
+})();
+
+function saveUndoStack() {
+  try {
+    localStorage.setItem(UNDO_STACK_KEY, JSON.stringify(undoStack));
+  } catch (e) {
+    // ストレージがいっぱいなら半分に減らして再試行
+    undoStack = undoStack.slice(Math.floor(undoStack.length / 2));
+    try { localStorage.setItem(UNDO_STACK_KEY, JSON.stringify(undoStack)); } catch {}
+  }
+}
+
+function pushUndo(opLabel) {
+  const s = getActiveSession();
+  if (!s) return;
+  undoStack.push({
+    sessionId: s.id,
+    transcript: s.transcript || '',
+    memo: s.memo || '',
+    summary: s.summary || '',
+    chat: JSON.stringify(s.chat || []),
+    ts: Date.now(),
+    op: opLabel || '操作',
+  });
+  while (undoStack.length > MAX_UNDO_ENTRIES) undoStack.shift();
+  saveUndoStack();
+  updateUndoButton();
+  diagLog.info(`Undo可: ${opLabel}`);
+}
+
+function doUndo() {
+  if (undoStack.length === 0) {
+    setStatus('idle', '戻せる操作がありません');
+    setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
+                                state.isRecording ? '録音中' : '停止'), 1800);
+    return;
+  }
+  const last = undoStack.pop();
+  const target = state.sessions.find(x => x.id === last.sessionId);
+  if (!target) {
+    setStatus('error', 'Undo対象のセッションが見つかりません');
+    saveUndoStack();
+    updateUndoButton();
+    return;
+  }
+  // 現在の状態をもう1段Undoに積む = Redo相当（将来のRedo追加のため retained）
+  target.transcript = last.transcript;
+  target.memo = last.memo;
+  target.summary = last.summary;
+  try { target.chat = JSON.parse(last.chat || '[]'); } catch { target.chat = []; }
+  target.updatedAt = Date.now();
+  persistSessions();
+  if (state.activeId === last.sessionId) {
+    loadActiveSessionIntoDOM();
+  }
+  renderTabs();
+  saveUndoStack();
+  updateUndoButton();
+  diagLog.info(`Undo実行: ${last.op}`);
+  setStatus('idle', `戻しました: ${last.op}`);
+  setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
+                              state.isRecording ? '録音中' : '停止'), 2200);
+}
+
+function updateUndoButton() {
+  const btn = document.getElementById('btn-undo');
+  if (!btn) return;
+  btn.disabled = undoStack.length === 0;
+  const last = undoStack[undoStack.length - 1];
+  btn.title = last
+    ? `戻す: ${last.op} (Ctrl+Z)`
+    : '戻す（AI整形等の操作を元に戻す） — 戻せる操作なし';
 }
 
 function toggleAi() {
@@ -4855,6 +5003,23 @@ enableHorizontalWheelScroll(document.getElementById('controls'));
 enableHorizontalWheelScroll(document.getElementById('tabs'));
 enableHorizontalWheelScroll(document.getElementById('inner-tabs'));
 
+/* Undo ボタン / Ctrl+Z */
+(function bindUndo() {
+  const btn = document.getElementById('btn-undo');
+  if (btn) btn.addEventListener('click', doUndo);
+  updateUndoButton();
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      // 編集中フィールドでのネイティブ Undo は邪魔しない
+      const t = e.target;
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      e.preventDefault();
+      doUndo();
+    }
+  });
+})();
+
 /* ───────── 検索＆置換（Ctrl+F / 検索アイコン） ─────────
  * アクティブなペインの contenteditable / rendered 領域内のテキストを検索・置換する。
  * テキストノードだけを対象にして <mark.search-hit> で囲む方式。
@@ -5072,7 +5237,8 @@ function searchReplaceAll() {
   const n = searchState.matches.length;
   if (n === 0) return;
   const repl = document.getElementById('search-replace').value;
-  if (!confirm(`${n}件を「${repl || '（空文字）'}」に置換しますか？`)) return;
+  if (!confirm(`${n}件を「${repl || '（空文字）'}」に置換しますか？\n\nCtrl+Z で戻せます。`)) return;
+  pushUndo(`全置換 (${n}件)`);
   for (const m of searchState.matches) {
     const p = m.parentNode;
     if (!p) continue;
@@ -5145,21 +5311,19 @@ function searchReplaceAll() {
   if (btnReplOne) btnReplOne.addEventListener('click', searchReplaceOne);
   if (btnReplAll) btnReplAll.addEventListener('click', searchReplaceAll);
 
-  // Ctrl+F / Cmd+F 全体ハンドラ
+  // Ctrl+F / Cmd+F — 開いていたらトグルで閉じる、閉じていたら開く
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
       e.preventDefault();
-      if (searchState.open) {
-        // 開いてたらフォーカスを検索欄へ
-        const inp = document.getElementById('search-input');
-        if (inp) { inp.focus(); inp.select(); }
-      } else {
-        openSearchBar();
-      }
+      if (searchState.open) closeSearchBar();
+      else openSearchBar();
     } else if (e.key === 'Escape' && searchState.open) {
       closeSearchBar();
     }
   });
+
+  // 検索バーをドラッグで移動可能に（上のタブバー等と被らないよう自由配置）
+  bindSearchBarDrag();
 
   // ペイン切替時は検索対象が変わるのでハイライトをクリアして再検索
   document.addEventListener('dictation:paneSwitched', () => {
@@ -5168,3 +5332,76 @@ function searchReplaceAll() {
     runSearch();
   });
 })();
+
+/**
+ * 検索バーをドラッグ可能に。
+ * 入力欄やボタンではなくバー本体の余白をつかんで移動できる。
+ * 位置は localStorage に保存して次回起動時に復元（タブバーとの重なり回避）。
+ */
+function bindSearchBarDrag() {
+  const bar = document.getElementById('search-bar');
+  if (!bar || bar.__dragWired) return;
+  bar.__dragWired = true;
+
+  // 保存済み位置を復元
+  try {
+    const saved = JSON.parse(localStorage.getItem('dictation:searchBarPos') || 'null');
+    if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+      bar.style.left = saved.left + 'px';
+      bar.style.top  = saved.top + 'px';
+      bar.style.right = 'auto';
+    }
+  } catch {}
+
+  let dragging = false;
+  let startX = 0, startY = 0, originLeft = 0, originTop = 0;
+
+  bar.addEventListener('pointerdown', (e) => {
+    // 入力・ボタンはドラッグ対象外（操作と衝突させない）
+    if (e.target.closest('input, button, select, textarea')) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    const z = (parseFloat(document.documentElement.style.zoom) || 1) || 1;
+    const rect = bar.getBoundingClientRect();
+    // 初回ドラッグ時は right:16px をやめて left 基準に
+    bar.style.left = (rect.left / z) + 'px';
+    bar.style.top  = (rect.top  / z) + 'px';
+    bar.style.right = 'auto';
+    startX = e.clientX;
+    startY = e.clientY;
+    originLeft = rect.left / z;
+    originTop  = rect.top  / z;
+    dragging = true;
+    bar.classList.add('dragging');
+    try { bar.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+  });
+
+  bar.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const z = (parseFloat(document.documentElement.style.zoom) || 1) || 1;
+    const dx = (e.clientX - startX) / z;
+    const dy = (e.clientY - startY) / z;
+    bar.style.left = (originLeft + dx) + 'px';
+    bar.style.top  = (originTop  + dy) + 'px';
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    bar.classList.remove('dragging');
+    try { bar.releasePointerCapture(e.pointerId); } catch {}
+    // ビューポート内に収める
+    const r = bar.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight, m = 4;
+    const z = (parseFloat(document.documentElement.style.zoom) || 1) || 1;
+    let left = r.left / z, top = r.top / z;
+    left = Math.max(m / z, Math.min((vw - r.width - m) / z, left));
+    top  = Math.max(m / z, Math.min((vh - r.height - m) / z, top));
+    bar.style.left = left + 'px';
+    bar.style.top  = top + 'px';
+    // 位置を永続化
+    try { localStorage.setItem('dictation:searchBarPos', JSON.stringify({ left, top })); } catch {}
+  };
+  bar.addEventListener('pointerup', endDrag);
+  bar.addEventListener('pointercancel', endDrag);
+}

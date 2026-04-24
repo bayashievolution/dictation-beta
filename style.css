@@ -765,8 +765,16 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  cursor: grab;         /* バー余白はドラッグ可能 */
+  user-select: none;
   animation: searchBarIn 0.18s var(--ease-out);
 }
+.search-bar.dragging { cursor: grabbing; }
+.search-bar input,
+.search-bar button {
+  cursor: auto;         /* 入力・ボタンは通常カーソル */
+}
+.search-bar button { cursor: pointer; }
 @keyframes searchBarIn {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
