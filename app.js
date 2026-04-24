@@ -2418,30 +2418,45 @@ function bindPaneTypingUndo() {
     el.__typingUndoWired = true;
     paneLastStable[paneId] = el.innerHTML;
 
-    const onTypingBurst = () => {
+    // 現在のバーストを Undo スタックに確定させて baseline を更新するヘルパ
+    const flushBurst = (opLabel = '編集') => {
+      if (paneTypingTimers[paneId]) {
+        clearTimeout(paneTypingTimers[paneId]);
+        paneTypingTimers[paneId] = null;
+      }
+      const current = el.innerHTML;
+      if (current === paneLastStable[paneId]) return;
+      pushUndoSnapshot(paneId, opLabel, paneLastStable[paneId]);
+      paneLastStable[paneId] = current;
+    };
+
+    // 2秒デバウンス: 長文入力でも一定時間おきに区切る安全ネット
+    el.addEventListener('input', () => {
       if (paneTypingTimers[paneId]) clearTimeout(paneTypingTimers[paneId]);
       paneTypingTimers[paneId] = setTimeout(() => {
         paneTypingTimers[paneId] = null;
         const current = el.innerHTML;
-        // 差分なし or 打ち始める前の state が未把握 → スキップ
         if (current === paneLastStable[paneId]) return;
         pushUndoSnapshot(paneId, '編集', paneLastStable[paneId]);
-        paneLastStable[paneId] = current; // 新しい基準に更新
-      }, 2000);
-    };
-
-    el.addEventListener('input', onTypingBurst);
-    // フォーカスアウト時に未確定のバーストを即スナップ
-    el.addEventListener('blur', () => {
-      if (!paneTypingTimers[paneId]) return;
-      clearTimeout(paneTypingTimers[paneId]);
-      paneTypingTimers[paneId] = null;
-      const current = el.innerHTML;
-      if (current !== paneLastStable[paneId]) {
-        pushUndoSnapshot(paneId, '編集', paneLastStable[paneId]);
         paneLastStable[paneId] = current;
+      }, 2000);
+    });
+
+    // Enter を境界にする（1行単位で戻る）。
+    // キーが押された直後の「改行前」状態を即スナップして baseline を更新。
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) {
+        // 改行前に現バーストを確定 → 次の行から新しい baseline で記録開始
+        flushBurst('行編集');
+        // Enter 適用後の状態を次の baseline にする（1フレーム後にキャプチャ）
+        requestAnimationFrame(() => {
+          paneLastStable[paneId] = el.innerHTML;
+        });
       }
     });
+
+    // フォーカスアウト時にも未確定のバーストを確定
+    el.addEventListener('blur', () => flushBurst('編集'));
   }
 }
 
