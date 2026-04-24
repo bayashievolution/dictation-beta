@@ -32,6 +32,10 @@ const ICON_DEFS = {
   'help-circle': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   // ライブ字幕（OSD）用。モニター＋キャプション線のイメージ
   'captions': '<rect x="3" y="5" width="18" height="14" rx="2"/><line x1="7" y1="11" x2="11" y2="11"/><line x1="7" y1="14" x2="11" y2="14"/><line x1="14" y1="11" x2="17" y2="11"/><line x1="14" y1="14" x2="17" y2="14"/>',
+  // 検索（虫眼鏡）
+  'search': '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  // 置換（⇄ / swap）
+  'replace': '<path d="M4 7h13M4 7l4-4M4 7l4 4"/><path d="M20 17H7M20 17l-4-4M20 17l-4 4"/>',
 };
 
 function icon(name, size = 16) {

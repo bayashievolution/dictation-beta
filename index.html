@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&family=Noto+Serif+JP:wght@400;500;600&family=M+PLUS+1p:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;600&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600&family=Kaisei+Opti:wght@400;500&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=0.12.8" />
+  <link rel="stylesheet" href="style.css?v=0.12.9" />
 </head>
 <body>
   <div id="app">
@@ -40,6 +40,9 @@
       </button>
       <button id="btn-clear-all" class="btn btn-ghost btn-square" title="全タブをクリア">
         <span class="btn-icon" data-icon="trash"></span>
+      </button>
+      <button id="btn-search" class="btn btn-ghost btn-square" title="検索＆置換（Ctrl+F）">
+        <span class="btn-icon" data-icon="search"></span>
       </button>
       <button id="btn-settings" class="btn btn-ghost btn-square" title="設定">
         <span class="btn-icon" data-icon="settings"></span>
@@ -480,6 +483,30 @@
     </div>
   </div>
 
+  <!-- 検索＆置換バー（Ctrl+F / 検索アイコンで開く） -->
+  <div id="search-bar" class="search-bar hidden" role="dialog" aria-label="検索と置換">
+    <div class="search-row">
+      <span class="search-icon" data-icon="search"></span>
+      <input id="search-input" type="text" placeholder="検索（Enter=次へ / Shift+Enter=前へ）" spellcheck="false" />
+      <span id="search-counter" class="search-counter">0件</span>
+      <button id="search-prev" class="search-btn" title="前へ (Shift+Enter)">◀</button>
+      <button id="search-next" class="search-btn" title="次へ (Enter)">▶</button>
+      <button id="search-case" class="search-btn search-toggle" title="大文字小文字を区別">Aa</button>
+      <button id="search-regex" class="search-btn search-toggle" title="正規表現">.*</button>
+      <button id="search-toggle-replace" class="search-btn" title="置換欄の表示/非表示">
+        <span data-icon="replace"></span>
+      </button>
+      <button id="search-close" class="search-btn" title="閉じる (Esc)">×</button>
+    </div>
+    <div id="search-replace-row" class="search-row search-replace-row hidden">
+      <span class="search-icon" data-icon="replace"></span>
+      <input id="search-replace" type="text" placeholder="置換" spellcheck="false" />
+      <button id="search-replace-one" class="search-btn search-action" title="現在の一致を置換">置換</button>
+      <button id="search-replace-all" class="search-btn search-action" title="すべて置換">全置換</button>
+    </div>
+    <div class="search-scope" id="search-scope"></div>
+  </div>
+
   <!-- 無音停止確認ダイアログ -->
   <div id="silence-dialog" class="modal hidden">
     <div class="modal-backdrop"></div>
@@ -500,8 +527,8 @@
     </div>
   </div>
 
-  <script src="icons.js?v=0.12.8"></script>
-  <script src="gemini.js?v=0.12.8"></script>
-  <script src="app.js?v=0.12.8"></script>
+  <script src="icons.js?v=0.12.9"></script>
+  <script src="gemini.js?v=0.12.9"></script>
+  <script src="app.js?v=0.12.9"></script>
 </body>
 </html>

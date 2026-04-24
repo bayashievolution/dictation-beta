@@ -749,6 +749,116 @@ html, body {
   pointer-events: none;
 }
 
+/* ───────── 検索＆置換バー（Ctrl+F / 検索アイコン） ───────── */
+.search-bar {
+  position: fixed;
+  top: 76px;
+  right: 16px;
+  z-index: 400;
+  min-width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: searchBarIn 0.18s var(--ease-out);
+}
+@keyframes searchBarIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.search-bar.hidden { display: none; }
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-row .search-icon {
+  color: var(--text-muted);
+}
+.search-row .search-icon svg { width: 14px; height: 14px; }
+.search-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.search-row input[type="text"]:focus { border-color: var(--accent); }
+.search-counter {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 6px;
+  font-family: var(--font-mono, 'Source Code Pro', monospace);
+  min-width: 44px;
+  text-align: right;
+}
+.search-counter.no-match { color: var(--danger); }
+.search-btn {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.search-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+  border-color: var(--border);
+}
+.search-btn:disabled { opacity: 0.35; cursor: default; }
+.search-btn svg { width: 13px; height: 13px; }
+.search-toggle.active {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--accent);
+  border-color: rgba(52, 211, 153, 0.4);
+}
+.search-action {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  padding: 0 10px;
+}
+.search-replace-row.hidden { display: none; }
+.search-scope {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 0 2px;
+  letter-spacing: 0.04em;
+}
+
+/* 検索ヒットのハイライト */
+mark.search-hit {
+  background: rgba(253, 224, 71, 0.35);
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+  transition: background 0.12s;
+}
+mark.search-hit.current {
+  background: rgba(253, 186, 116, 0.75);
+  box-shadow: 0 0 0 1px rgba(253, 186, 116, 0.95);
+}
+
 /* ───────── タブ右クリックのコンテキストメニュー ───────── */
 .context-menu {
   position: fixed;
