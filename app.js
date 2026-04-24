@@ -2413,6 +2413,24 @@ function bindPaneTypingUndo() {
     { paneId: 'pane-memo',       el: els.memo },
     { paneId: 'pane-summary',    el: els.summary },
   ];
+
+  /* スナップショット頻度の目安:
+   *  - 句読点（。.!?！？、,）→ 即スナップ（文/句の区切り）
+   *  - 20文字以上打った → 即スナップ（文字数閾値）
+   *  - Enter → 即スナップ（行区切り）
+   *  - 2秒放置 → スナップ（idle安全ネット）
+   *  - blur → スナップ
+   *  こうすると「バーっと打ち続け」ても、20〜25字ごと + 句読点ごと に段階的に戻れる。 */
+  const CHARS_THRESHOLD = 20;
+  const PUNCT_RE = /[。．.!?！？、,，]/;
+
+  // baseline（paneLastStable）の textContent 長を取るヘルパ
+  const baseTextLen = (paneId) => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = paneLastStable[paneId] || '';
+    return (tmp.textContent || '').length;
+  };
+
   for (const { paneId, el } of targets) {
     if (!el || el.__typingUndoWired) continue;
     el.__typingUndoWired = true;
@@ -2430,32 +2448,43 @@ function bindPaneTypingUndo() {
       paneLastStable[paneId] = current;
     };
 
-    // 2秒デバウンス: 長文入力でも一定時間おきに区切る安全ネット
-    el.addEventListener('input', () => {
+    el.addEventListener('input', (e) => {
+      // 入力された文字列（IME 確定時も含む）
+      const inputData = (e && 'data' in e && e.data) ? e.data : '';
+
+      // 1) 句読点が入力されたら即スナップ（文/句の区切り）
+      if (inputData && PUNCT_RE.test(inputData)) {
+        flushBurst('文区切り');
+        return;
+      }
+
+      // 2) 文字数閾値（baseline から 20字以上増えた）
+      const baseLen = baseTextLen(paneId);
+      const curLen = (el.textContent || '').length;
+      if (Math.abs(curLen - baseLen) >= CHARS_THRESHOLD) {
+        flushBurst('編集');
+        return;
+      }
+
+      // 3) 2秒デバウンス（idle 時の安全ネット）
       if (paneTypingTimers[paneId]) clearTimeout(paneTypingTimers[paneId]);
       paneTypingTimers[paneId] = setTimeout(() => {
         paneTypingTimers[paneId] = null;
-        const current = el.innerHTML;
-        if (current === paneLastStable[paneId]) return;
-        pushUndoSnapshot(paneId, '編集', paneLastStable[paneId]);
-        paneLastStable[paneId] = current;
+        flushBurst('編集');
       }, 2000);
     });
 
-    // Enter を境界にする（1行単位で戻る）。
-    // キーが押された直後の「改行前」状態を即スナップして baseline を更新。
+    // Enter を境界に（1行単位）
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.isComposing) {
-        // 改行前に現バーストを確定 → 次の行から新しい baseline で記録開始
         flushBurst('行編集');
-        // Enter 適用後の状態を次の baseline にする（1フレーム後にキャプチャ）
         requestAnimationFrame(() => {
           paneLastStable[paneId] = el.innerHTML;
         });
       }
     });
 
-    // フォーカスアウト時にも未確定のバーストを確定
+    // フォーカスアウト時に未確定のバーストを確定
     el.addEventListener('blur', () => flushBurst('編集'));
   }
 }
