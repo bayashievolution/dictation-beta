@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&family=Noto+Serif+JP:wght@400;500;600&family=M+PLUS+1p:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;600&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600&family=Kaisei+Opti:wght@400;500&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=0.12.11" />
+  <link rel="stylesheet" href="style.css?v=0.12.12" />
 </head>
 <body>
   <div id="app">
@@ -40,12 +40,6 @@
       </button>
       <button id="btn-clear-all" class="btn btn-ghost btn-square" title="全タブをクリア">
         <span class="btn-icon" data-icon="trash"></span>
-      </button>
-      <button id="btn-undo" class="btn btn-ghost btn-square" disabled title="戻す（AI整形・クリア等を元に戻す、Ctrl+Z）">
-        <span class="btn-icon" data-icon="undo"></span>
-      </button>
-      <button id="btn-redo" class="btn btn-ghost btn-square" disabled title="やり直す（Ctrl+Shift+Z / Ctrl+Y）">
-        <span class="btn-icon" data-icon="redo"></span>
       </button>
       <button id="btn-search" class="btn btn-ghost btn-square" title="検索＆置換（Ctrl+F）">
         <span class="btn-icon" data-icon="search"></span>
@@ -103,6 +97,12 @@
             <span class="toggle-track" data-role="toggle"><span class="toggle-knob"></span></span>
             <span class="toggle-label" data-role="action"><span data-icon="sparkles"></span>文字起こし整形</span>
           </button>
+          <button class="pane-btn pane-btn-icon" data-pane-undo="pane-transcript" disabled title="この タブの変更を戻す（Ctrl+Z）">
+            <span data-icon="undo"></span>
+          </button>
+          <button class="pane-btn pane-btn-icon" data-pane-redo="pane-transcript" disabled title="この タブの変更をやり直す（Ctrl+Shift+Z）">
+            <span data-icon="redo"></span>
+          </button>
           <button class="pane-btn" data-pane-copy="pane-transcript" title="このタブだけコピー">
             <span data-icon="copy"></span><span>コピー</span>
           </button>
@@ -135,6 +135,12 @@
 
       <div id="pane-memo" class="pane">
         <div class="pane-header">
+          <button class="pane-btn pane-btn-icon" data-pane-undo="pane-memo" disabled title="メモの変更を戻す（Ctrl+Z）">
+            <span data-icon="undo"></span>
+          </button>
+          <button class="pane-btn pane-btn-icon" data-pane-redo="pane-memo" disabled title="メモの変更をやり直す（Ctrl+Shift+Z）">
+            <span data-icon="redo"></span>
+          </button>
           <button class="pane-btn" data-pane-copy="pane-memo" title="このタブだけコピー">
             <span data-icon="copy"></span><span>コピー</span>
           </button>
@@ -196,6 +202,12 @@
             <option value="medium">バランス</option>
             <option value="high">概要</option>
           </select>
+          <button class="pane-btn pane-btn-icon" data-pane-undo="pane-summary" disabled title="要約の変更を戻す（Ctrl+Z）">
+            <span data-icon="undo"></span>
+          </button>
+          <button class="pane-btn pane-btn-icon" data-pane-redo="pane-summary" disabled title="要約の変更をやり直す（Ctrl+Shift+Z）">
+            <span data-icon="redo"></span>
+          </button>
           <button class="pane-btn" data-pane-copy="pane-summary" title="このタブだけコピー">
             <span data-icon="copy"></span><span>コピー</span>
           </button>
@@ -533,8 +545,8 @@
     </div>
   </div>
 
-  <script src="icons.js?v=0.12.11"></script>
-  <script src="gemini.js?v=0.12.11"></script>
-  <script src="app.js?v=0.12.11"></script>
+  <script src="icons.js?v=0.12.12"></script>
+  <script src="gemini.js?v=0.12.12"></script>
+  <script src="app.js?v=0.12.12"></script>
 </body>
 </html>

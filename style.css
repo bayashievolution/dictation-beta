@@ -1007,18 +1007,23 @@ mark.search-hit.current {
 
 
 /* ───────── Pane header (per-tab actions) ───────── */
+/* ペインヘッダ: ボタン群は折り返さず、横スクロールで収める（縦スペース節約） */
 .pane-header {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   padding: 8px 14px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  container-type: inline-size;
-  container-name: pane-header;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+.pane-header::-webkit-scrollbar { height: 4px; }
+.pane-header > * { flex-shrink: 0; }
 
 
 .pane-btn {

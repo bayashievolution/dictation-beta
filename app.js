@@ -615,7 +615,7 @@ async function refineUnstructuredInTranscript({ force = false, showFeedback = tr
   if (unstructuredNodes.length === 0) return;
 
   // 破壊的操作: Undo スナップショットを取る（force 指定時のみ、つまり手動クリック時）
-  if (force) pushUndo('貼付けテキスト整形');
+  if (force) pushUndo('貼付けテキスト整形', 'pane-transcript');
 
   // テキストを集めて改行で結合
   const rawText = unstructuredNodes.map(n => {
@@ -760,7 +760,7 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
   )) return;
 
   // 破壊的操作なので Undo スナップショット
-  pushUndo('全体整形');
+  pushUndo('全体整形', 'pane-transcript');
 
   // 全部消して refining プレースホルダを置く
   paragraphs.forEach(p => p.remove());
@@ -2257,7 +2257,7 @@ function clearPane(paneId, { confirmFirst = true, skipUndo = false } = {}) {
     : false;
   if (!hasContent) return;
   if (confirmFirst && !confirm(`「${label}」をクリアしますか？\n\nCtrl+Z で戻せます。`)) return;
-  if (!skipUndo) pushUndo(`クリア: ${label}`);
+  if (!skipUndo && PANE_FIELD[paneId]) pushUndo(`クリア: ${label}`, paneId);
   if (paneId === 'pane-transcript') {
     els.confirmed.innerHTML = '';
     els.interim.textContent = '';
@@ -2282,66 +2282,78 @@ function clearPane(paneId, { confirmFirst = true, skipUndo = false } = {}) {
 function clearAllPanes() {
   if (!hasAnyContent()) return;
   if (!confirm('このセッションの4タブ（文字起こし・メモ・要約・質問）をすべてクリアしますか？\n\nCtrl+Z（Undo）で元に戻せます。')) return;
-  pushUndo('全タブクリア');
+  // 各ペインにスナップショット（chatは対象外）
+  for (const pid of Object.keys(PANE_FIELD)) pushUndo('全タブクリア', pid);
   clearPane('pane-transcript', { confirmFirst: false, skipUndo: true });
   clearPane('pane-memo',       { confirmFirst: false, skipUndo: true });
   clearPane('pane-summary',    { confirmFirst: false, skipUndo: true });
   clearPane('pane-chat',       { confirmFirst: false, skipUndo: true });
 }
 
-/* ───────── Undo / Redo（破壊的操作を元に戻す・やり直す） ─────────
- * 破壊的操作の前に pushUndo(op) で現状をスナップショットし、localStorage に永続化。
- * Ctrl+Z で戻す、Ctrl+Shift+Z / Ctrl+Y でやり直す。
- * スナップショットには DOM の最新状態を snapshotActiveToSession で反映してから取るので、
- * メモや要約を編集した直後の AI 整形でもその編集内容が戻せる。 */
-const UNDO_STACK_KEY = 'dictation:undoStack';
-const REDO_STACK_KEY = 'dictation:redoStack';
+/* ───────── Pane別 Undo / Redo ─────────
+ * タブごとに独立したスタックを持つ。各スタック項目は以下:
+ *   { sessionId, content, ts, op }
+ * content は各 pane の HTML 文字列 または chat JSON。
+ * localStorage に永続化し、pane単位で保存（容量対策）。 */
+
+const PANE_FIELD = {
+  'pane-transcript': 'transcript',
+  'pane-memo':       'memo',
+  'pane-summary':    'summary',
+};
 const MAX_UNDO_ENTRIES = 15;
 
-let undoStack = (function loadUndo() {
-  try { return JSON.parse(localStorage.getItem(UNDO_STACK_KEY) || '[]'); } catch { return []; }
-})();
-let redoStack = (function loadRedo() {
-  try { return JSON.parse(localStorage.getItem(REDO_STACK_KEY) || '[]'); } catch { return []; }
+// paneId -> { undo: [], redo: [] }
+const paneStacks = (function loadAll() {
+  const obj = {};
+  for (const paneId of Object.keys(PANE_FIELD)) {
+    try {
+      obj[paneId] = {
+        undo: JSON.parse(localStorage.getItem(`dictation:undo:${paneId}`) || '[]'),
+        redo: JSON.parse(localStorage.getItem(`dictation:redo:${paneId}`) || '[]'),
+      };
+    } catch { obj[paneId] = { undo: [], redo: [] }; }
+  }
+  return obj;
 })();
 
-function _persistStack(key, stack) {
+function _persistPaneStack(paneId) {
+  const s = paneStacks[paneId];
+  if (!s) return;
   try {
-    localStorage.setItem(key, JSON.stringify(stack));
-    return stack;
+    localStorage.setItem(`dictation:undo:${paneId}`, JSON.stringify(s.undo));
+    localStorage.setItem(`dictation:redo:${paneId}`, JSON.stringify(s.redo));
   } catch (e) {
-    const reduced = stack.slice(Math.floor(stack.length / 2));
-    try { localStorage.setItem(key, JSON.stringify(reduced)); } catch {}
-    return reduced;
+    // 容量オーバー時は半分に圧縮して再保存
+    s.undo = s.undo.slice(Math.floor(s.undo.length / 2));
+    s.redo = s.redo.slice(Math.floor(s.redo.length / 2));
+    try {
+      localStorage.setItem(`dictation:undo:${paneId}`, JSON.stringify(s.undo));
+      localStorage.setItem(`dictation:redo:${paneId}`, JSON.stringify(s.redo));
+    } catch {}
   }
 }
-function saveUndoStack() { undoStack = _persistStack(UNDO_STACK_KEY, undoStack); }
-function saveRedoStack() { redoStack = _persistStack(REDO_STACK_KEY, redoStack); }
 
-/** 現在アクティブセッションのスナップショットを作る（DOMの最新状態を反映させてから取る） */
-function _makeSnapshot(opLabel) {
+function _paneSnapshot(paneId, opLabel) {
   snapshotActiveToSession();
-  const s = getActiveSession();
-  if (!s) return null;
+  const sess = getActiveSession();
+  if (!sess) return null;
+  const field = PANE_FIELD[paneId];
+  if (!field) return null;
   return {
-    sessionId: s.id,
-    transcript: s.transcript || '',
-    memo: s.memo || '',
-    summary: s.summary || '',
-    chat: JSON.stringify(s.chat || []),
+    sessionId: sess.id,
+    content: sess[field] || '',
     ts: Date.now(),
     op: opLabel || '操作',
   };
 }
 
-/** スナップショットを対象セッションに適用 */
-function _applySnapshot(snap) {
+function _applyPaneSnapshot(paneId, snap) {
   const target = state.sessions.find(x => x.id === snap.sessionId);
   if (!target) return false;
-  target.transcript = snap.transcript;
-  target.memo = snap.memo;
-  target.summary = snap.summary;
-  try { target.chat = JSON.parse(snap.chat || '[]'); } catch { target.chat = []; }
+  const field = PANE_FIELD[paneId];
+  if (!field) return false;
+  target[field] = snap.content;
   target.updatedAt = Date.now();
   persistSessions();
   if (state.activeId === snap.sessionId) {
@@ -2351,90 +2363,126 @@ function _applySnapshot(snap) {
   return true;
 }
 
-/** 破壊的操作の前に呼ぶ。現在の状態を Undo スタックに積み、Redo はクリア。 */
-function pushUndo(opLabel) {
-  const snap = _makeSnapshot(opLabel);
-  if (!snap) return;
-  undoStack.push(snap);
-  while (undoStack.length > MAX_UNDO_ENTRIES) undoStack.shift();
-  saveUndoStack();
-  if (redoStack.length > 0) { redoStack = []; saveRedoStack(); }
-  updateUndoRedoButtons();
-  diagLog.info(`Undo可: ${opLabel}`);
+// 現在セッションに属する最新のUndo/Redo項目のインデックスを返す（無ければ-1）
+function _topForSession(stack, sessionId) {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (stack[i].sessionId === sessionId) return i;
+  }
+  return -1;
 }
 
-function doUndo() {
-  if (undoStack.length === 0) {
+/**
+ * 破壊的操作の直前に呼ぶ。対象ペインの現状をUndoスタックに積む。
+ * Redoスタックはクリア（新操作後はRedoできないため）。
+ */
+function pushUndo(opLabel, paneId) {
+  // 旧呼び出し（paneId なし）は active pane で推定（後方互換）
+  paneId = paneId || state.activePane || 'pane-transcript';
+  if (!PANE_FIELD[paneId]) return;
+  const snap = _paneSnapshot(paneId, opLabel);
+  if (!snap) return;
+  const s = paneStacks[paneId];
+  s.undo.push(snap);
+  while (s.undo.length > MAX_UNDO_ENTRIES) s.undo.shift();
+  s.redo = [];
+  _persistPaneStack(paneId);
+  updatePaneUndoRedoButtons();
+  diagLog.info(`Undo可: ${paneId} / ${opLabel}`);
+}
+
+function doPaneUndo(paneId) {
+  const s = paneStacks[paneId];
+  if (!s) return;
+  const idx = _topForSession(s.undo, state.activeId);
+  if (idx < 0) {
     setStatus('idle', '戻せる操作がありません');
     setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
-                                state.isRecording ? '録音中' : '停止'), 1800);
+                                state.isRecording ? '録音中' : '停止'), 1500);
     return;
   }
-  // 現在状態を Redo に退避
-  const current = _makeSnapshot(undoStack[undoStack.length - 1].op);
+  // 現在状態をRedoに退避
+  const current = _paneSnapshot(paneId, s.undo[idx].op);
   if (current) {
-    redoStack.push(current);
-    while (redoStack.length > MAX_UNDO_ENTRIES) redoStack.shift();
-    saveRedoStack();
+    s.redo.push(current);
+    while (s.redo.length > MAX_UNDO_ENTRIES) s.redo.shift();
   }
-  const last = undoStack.pop();
-  saveUndoStack();
-  if (!_applySnapshot(last)) {
+  const last = s.undo.splice(idx, 1)[0];
+  _persistPaneStack(paneId);
+  if (!_applyPaneSnapshot(paneId, last)) {
     setStatus('error', 'Undo対象のセッションが見つかりません');
-    updateUndoRedoButtons();
+    updatePaneUndoRedoButtons();
     return;
   }
-  updateUndoRedoButtons();
-  diagLog.info(`Undo実行: ${last.op}`);
-  setStatus('idle', `戻しました: ${last.op}`);
+  updatePaneUndoRedoButtons();
+  const paneLabel = PANE_META[paneId]?.label || paneId;
+  diagLog.info(`Undo実行: ${paneId} / ${last.op}`);
+  setStatus('idle', `[${paneLabel}] 戻しました: ${last.op}`);
   setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
-                              state.isRecording ? '録音中' : '停止'), 2200);
+                              state.isRecording ? '録音中' : '停止'), 2000);
 }
 
-function doRedo() {
-  if (redoStack.length === 0) {
+function doPaneRedo(paneId) {
+  const s = paneStacks[paneId];
+  if (!s) return;
+  const idx = _topForSession(s.redo, state.activeId);
+  if (idx < 0) {
     setStatus('idle', 'やり直せる操作がありません');
     setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
-                                state.isRecording ? '録音中' : '停止'), 1800);
+                                state.isRecording ? '録音中' : '停止'), 1500);
     return;
   }
-  // 現在状態を Undo に退避
-  const current = _makeSnapshot(redoStack[redoStack.length - 1].op);
+  const current = _paneSnapshot(paneId, s.redo[idx].op);
   if (current) {
-    undoStack.push(current);
-    while (undoStack.length > MAX_UNDO_ENTRIES) undoStack.shift();
-    saveUndoStack();
+    s.undo.push(current);
+    while (s.undo.length > MAX_UNDO_ENTRIES) s.undo.shift();
   }
-  const next = redoStack.pop();
-  saveRedoStack();
-  if (!_applySnapshot(next)) {
+  const next = s.redo.splice(idx, 1)[0];
+  _persistPaneStack(paneId);
+  if (!_applyPaneSnapshot(paneId, next)) {
     setStatus('error', 'Redo対象のセッションが見つかりません');
-    updateUndoRedoButtons();
+    updatePaneUndoRedoButtons();
     return;
   }
-  updateUndoRedoButtons();
-  diagLog.info(`Redo実行: ${next.op}`);
-  setStatus('idle', `やり直しました: ${next.op}`);
+  updatePaneUndoRedoButtons();
+  const paneLabel = PANE_META[paneId]?.label || paneId;
+  diagLog.info(`Redo実行: ${paneId} / ${next.op}`);
+  setStatus('idle', `[${paneLabel}] やり直しました: ${next.op}`);
   setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
-                              state.isRecording ? '録音中' : '停止'), 2200);
+                              state.isRecording ? '録音中' : '停止'), 2000);
 }
 
-function updateUndoRedoButtons() {
-  const undoBtn = document.getElementById('btn-undo');
-  const redoBtn = document.getElementById('btn-redo');
-  if (undoBtn) {
-    undoBtn.disabled = undoStack.length === 0;
-    const last = undoStack[undoStack.length - 1];
-    undoBtn.title = last ? `戻す: ${last.op} (Ctrl+Z)` : '戻す — 戻せる操作なし';
-  }
-  if (redoBtn) {
-    redoBtn.disabled = redoStack.length === 0;
-    const next = redoStack[redoStack.length - 1];
-    redoBtn.title = next ? `やり直す: ${next.op} (Ctrl+Shift+Z / Ctrl+Y)` : 'やり直す — なし';
+function updatePaneUndoRedoButtons() {
+  const sid = state.activeId;
+  for (const paneId of Object.keys(PANE_FIELD)) {
+    const s = paneStacks[paneId];
+    const undoBtn = document.querySelector(`[data-pane-undo="${paneId}"]`);
+    const redoBtn = document.querySelector(`[data-pane-redo="${paneId}"]`);
+    const paneLabel = PANE_META[paneId]?.label || paneId;
+    // 現在セッションに属する最新エントリだけ考慮
+    const undoIdx = _topForSession(s.undo, sid);
+    const redoIdx = _topForSession(s.redo, sid);
+    if (undoBtn) {
+      undoBtn.disabled = undoIdx < 0;
+      const last = undoIdx >= 0 ? s.undo[undoIdx] : null;
+      undoBtn.title = last
+        ? `${paneLabel}を戻す: ${last.op} (Ctrl+Z)`
+        : `${paneLabel}を戻す — なし`;
+    }
+    if (redoBtn) {
+      redoBtn.disabled = redoIdx < 0;
+      const next = redoIdx >= 0 ? s.redo[redoIdx] : null;
+      redoBtn.title = next
+        ? `${paneLabel}をやり直す: ${next.op} (Ctrl+Shift+Z)`
+        : `${paneLabel}をやり直す — なし`;
+    }
   }
 }
-// 旧名との互換（既存呼び出しを壊さない）
-function updateUndoButton() { updateUndoRedoButtons(); }
+
+// 旧名との互換（既存の呼び出しを壊さないため残す）
+function updateUndoRedoButtons() { updatePaneUndoRedoButtons(); }
+function updateUndoButton() { updatePaneUndoRedoButtons(); }
+function doUndo() { doPaneUndo(state.activePane || 'pane-transcript'); }
+function doRedo() { doPaneRedo(state.activePane || 'pane-transcript'); }
 
 function toggleAi() {
   if (!state.settings.apiKey) { openSettings(); return; }
@@ -2863,6 +2911,10 @@ async function generateSummary({ silent = false, sessionId = null } = {}) {
   if (!state.settings.apiKey) {
     if (!silent) { alert('Gemini API キーが未設定です。設定から登録してください。'); openSettings(); }
     return;
+  }
+  // 要約は既存内容を置き換える破壊的操作。Undoスタックに退避（対象セッションがアクティブな時のみ）
+  if (targetId === state.activeId && (session.summary || '').trim()) {
+    pushUndo(silent ? '要約自動生成' : '要約生成', 'pane-summary');
   }
   state.isSummarizing = true;
   // 表示中のセッションだった場合のみ UI にローディング表示
@@ -3580,6 +3632,8 @@ function loadActiveSessionIntoDOM() {
   renderChat();
   updateActionButtons();
   renderTitleBar();
+  // Undo/Redo ボタンはセッションごとにフィルタされるので、セッション切替時にも更新
+  if (typeof updatePaneUndoRedoButtons === 'function') updatePaneUndoRedoButtons();
   state.userScrolledUp = false;
   requestAnimationFrame(() => autoScroll(true));
 }
@@ -5074,18 +5128,30 @@ function enableHorizontalWheelScroll(el) {
     el.scrollLeft += e.deltaY;
   }, { passive: false });
 }
-// コントロールバー・外タブ・内タブの3つに適用
+// コントロールバー・外タブ・内タブ・ペインヘッダに適用
 enableHorizontalWheelScroll(document.getElementById('controls'));
 enableHorizontalWheelScroll(document.getElementById('tabs'));
 enableHorizontalWheelScroll(document.getElementById('inner-tabs'));
+document.querySelectorAll('.pane-header').forEach(enableHorizontalWheelScroll);
 
-/* Undo / Redo ボタン と Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y */
-(function bindUndoRedo() {
-  const undoBtn = document.getElementById('btn-undo');
-  const redoBtn = document.getElementById('btn-redo');
-  if (undoBtn) undoBtn.addEventListener('click', doUndo);
-  if (redoBtn) redoBtn.addEventListener('click', doRedo);
-  updateUndoRedoButtons();
+/* ペイン別 Undo / Redo ボタンと Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y */
+(function bindPaneUndoRedo() {
+  // 各ペインヘッダの data-pane-undo / data-pane-redo ボタンをまとめて配線
+  document.querySelectorAll('[data-pane-undo]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const paneId = btn.dataset.paneUndo;
+      doPaneUndo(paneId);
+    });
+  });
+  document.querySelectorAll('[data-pane-redo]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const paneId = btn.dataset.paneRedo;
+      doPaneRedo(paneId);
+    });
+  });
+  updatePaneUndoRedoButtons();
 
   document.addEventListener('keydown', (e) => {
     const isMod = e.ctrlKey || e.metaKey;
@@ -5094,16 +5160,16 @@ enableHorizontalWheelScroll(document.getElementById('inner-tabs'));
     const t = e.target;
     const inEditable = t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
     if (inEditable) return;
-    // Ctrl+Shift+Z or Ctrl+Y → Redo
-    if ((e.key === 'z' && e.shiftKey) || e.key === 'Z' && e.shiftKey || e.key === 'y' || e.key === 'Y') {
+    // Ctrl+Shift+Z or Ctrl+Y → Redo（現在アクティブなペインに対して）
+    if ((e.key === 'z' && e.shiftKey) || (e.key === 'Z' && e.shiftKey) || e.key === 'y' || e.key === 'Y') {
       e.preventDefault();
-      doRedo();
+      doPaneRedo(state.activePane || 'pane-transcript');
       return;
     }
-    // Ctrl+Z → Undo
+    // Ctrl+Z → Undo（現在アクティブなペインに対して）
     if (e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
-      doUndo();
+      doPaneUndo(state.activePane || 'pane-transcript');
     }
   });
 })();
@@ -5326,7 +5392,8 @@ function searchReplaceAll() {
   if (n === 0) return;
   const repl = document.getElementById('search-replace').value;
   if (!confirm(`${n}件を「${repl || '（空文字）'}」に置換しますか？\n\nCtrl+Z で戻せます。`)) return;
-  pushUndo(`全置換 (${n}件)`);
+  // 検索の対象ペインで Undo スタックを積む
+  pushUndo(`全置換 (${n}件)`, state.activePane);
   for (const m of searchState.matches) {
     const p = m.parentNode;
     if (!p) continue;
