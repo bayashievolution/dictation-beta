@@ -34,8 +34,10 @@ const ICON_DEFS = {
   'captions': '<rect x="3" y="5" width="18" height="14" rx="2"/><line x1="7" y1="11" x2="11" y2="11"/><line x1="7" y1="14" x2="11" y2="14"/><line x1="14" y1="11" x2="17" y2="11"/><line x1="14" y1="14" x2="17" y2="14"/>',
   // 検索（虫眼鏡）
   'search': '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
-  // Undo (curved arrow going left)
-  'undo': '<path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/>',
+  // Undo (L字矢印: 左下へ折れ曲がって戻る)
+  'undo': '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+  // Redo (Undoの鏡像)
+  'redo': '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/>',
   // 置換（⇄ / swap）
   'replace': '<path d="M4 7h13M4 7l4-4M4 7l4 4"/><path d="M20 17H7M20 17l-4-4M20 17l-4 4"/>',
 };

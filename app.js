@@ -713,12 +713,23 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
   const container = getWriteContainer();
   const paragraphs = Array.from(container.querySelectorAll('.paragraph'));
 
-  // 全パラグラフを "## 見出し\n\n 本文" 形式に寄せて連結、構造外テキストも末尾へ
+  // 1つの .paragraph に複数の h2+p-body が入れ子になっている場合がある
+  // （setParagraphContent が refined テキストの "## A\n\nA本文\n\n## B\n\nB本文" を
+  //  全部同じ paragraph に展開する仕様のため）。
+  // querySelector('h2') だと先頭1つしか取れず、残りを丸ごとロストする。
+  // 全子要素を走査して h2/.p-body/その他 を順序通りに並べ直す。
   let allText = paragraphs.map(p => {
-    const h2 = p.querySelector('h2');
-    const body = p.querySelector('.p-body');
-    if (h2 && body) return `## ${h2.textContent.trim()}\n\n${body.innerText.trim()}`;
-    return (p.innerText || p.textContent || '').trim();
+    const parts = [];
+    for (const child of p.children) {
+      const t = (child.textContent || '').trim();
+      if (!t) continue;
+      if (child.tagName === 'H2') parts.push('## ' + t);
+      else parts.push(t);
+    }
+    if (parts.length === 0) {
+      return (p.innerText || p.textContent || '').trim();
+    }
+    return parts.join('\n\n');
   }).filter(Boolean).join('\n\n');
 
   // パラグラフに入っていない生テキストも拾う
@@ -2278,30 +2289,41 @@ function clearAllPanes() {
   clearPane('pane-chat',       { confirmFirst: false, skipUndo: true });
 }
 
-/* ───────── Undo（AI整形・クリア・全置換などの破壊的操作を元に戻す） ─────────
- * セッションの transcript/memo/summary/chat をスナップショットして
- * localStorage に永続化。Ctrl+Z または「戻す」ボタンで pop＆適用する。 */
+/* ───────── Undo / Redo（破壊的操作を元に戻す・やり直す） ─────────
+ * 破壊的操作の前に pushUndo(op) で現状をスナップショットし、localStorage に永続化。
+ * Ctrl+Z で戻す、Ctrl+Shift+Z / Ctrl+Y でやり直す。
+ * スナップショットには DOM の最新状態を snapshotActiveToSession で反映してから取るので、
+ * メモや要約を編集した直後の AI 整形でもその編集内容が戻せる。 */
 const UNDO_STACK_KEY = 'dictation:undoStack';
-const MAX_UNDO_ENTRIES = 10;
+const REDO_STACK_KEY = 'dictation:redoStack';
+const MAX_UNDO_ENTRIES = 15;
 
-let undoStack = (function loadUndoInit() {
+let undoStack = (function loadUndo() {
   try { return JSON.parse(localStorage.getItem(UNDO_STACK_KEY) || '[]'); } catch { return []; }
 })();
+let redoStack = (function loadRedo() {
+  try { return JSON.parse(localStorage.getItem(REDO_STACK_KEY) || '[]'); } catch { return []; }
+})();
 
-function saveUndoStack() {
+function _persistStack(key, stack) {
   try {
-    localStorage.setItem(UNDO_STACK_KEY, JSON.stringify(undoStack));
+    localStorage.setItem(key, JSON.stringify(stack));
+    return stack;
   } catch (e) {
-    // ストレージがいっぱいなら半分に減らして再試行
-    undoStack = undoStack.slice(Math.floor(undoStack.length / 2));
-    try { localStorage.setItem(UNDO_STACK_KEY, JSON.stringify(undoStack)); } catch {}
+    const reduced = stack.slice(Math.floor(stack.length / 2));
+    try { localStorage.setItem(key, JSON.stringify(reduced)); } catch {}
+    return reduced;
   }
 }
+function saveUndoStack() { undoStack = _persistStack(UNDO_STACK_KEY, undoStack); }
+function saveRedoStack() { redoStack = _persistStack(REDO_STACK_KEY, redoStack); }
 
-function pushUndo(opLabel) {
+/** 現在アクティブセッションのスナップショットを作る（DOMの最新状態を反映させてから取る） */
+function _makeSnapshot(opLabel) {
+  snapshotActiveToSession();
   const s = getActiveSession();
-  if (!s) return;
-  undoStack.push({
+  if (!s) return null;
+  return {
     sessionId: s.id,
     transcript: s.transcript || '',
     memo: s.memo || '',
@@ -2309,10 +2331,35 @@ function pushUndo(opLabel) {
     chat: JSON.stringify(s.chat || []),
     ts: Date.now(),
     op: opLabel || '操作',
-  });
+  };
+}
+
+/** スナップショットを対象セッションに適用 */
+function _applySnapshot(snap) {
+  const target = state.sessions.find(x => x.id === snap.sessionId);
+  if (!target) return false;
+  target.transcript = snap.transcript;
+  target.memo = snap.memo;
+  target.summary = snap.summary;
+  try { target.chat = JSON.parse(snap.chat || '[]'); } catch { target.chat = []; }
+  target.updatedAt = Date.now();
+  persistSessions();
+  if (state.activeId === snap.sessionId) {
+    loadActiveSessionIntoDOM();
+  }
+  renderTabs();
+  return true;
+}
+
+/** 破壊的操作の前に呼ぶ。現在の状態を Undo スタックに積み、Redo はクリア。 */
+function pushUndo(opLabel) {
+  const snap = _makeSnapshot(opLabel);
+  if (!snap) return;
+  undoStack.push(snap);
   while (undoStack.length > MAX_UNDO_ENTRIES) undoStack.shift();
   saveUndoStack();
-  updateUndoButton();
+  if (redoStack.length > 0) { redoStack = []; saveRedoStack(); }
+  updateUndoRedoButtons();
   diagLog.info(`Undo可: ${opLabel}`);
 }
 
@@ -2323,42 +2370,71 @@ function doUndo() {
                                 state.isRecording ? '録音中' : '停止'), 1800);
     return;
   }
+  // 現在状態を Redo に退避
+  const current = _makeSnapshot(undoStack[undoStack.length - 1].op);
+  if (current) {
+    redoStack.push(current);
+    while (redoStack.length > MAX_UNDO_ENTRIES) redoStack.shift();
+    saveRedoStack();
+  }
   const last = undoStack.pop();
-  const target = state.sessions.find(x => x.id === last.sessionId);
-  if (!target) {
+  saveUndoStack();
+  if (!_applySnapshot(last)) {
     setStatus('error', 'Undo対象のセッションが見つかりません');
-    saveUndoStack();
-    updateUndoButton();
+    updateUndoRedoButtons();
     return;
   }
-  // 現在の状態をもう1段Undoに積む = Redo相当（将来のRedo追加のため retained）
-  target.transcript = last.transcript;
-  target.memo = last.memo;
-  target.summary = last.summary;
-  try { target.chat = JSON.parse(last.chat || '[]'); } catch { target.chat = []; }
-  target.updatedAt = Date.now();
-  persistSessions();
-  if (state.activeId === last.sessionId) {
-    loadActiveSessionIntoDOM();
-  }
-  renderTabs();
-  saveUndoStack();
-  updateUndoButton();
+  updateUndoRedoButtons();
   diagLog.info(`Undo実行: ${last.op}`);
   setStatus('idle', `戻しました: ${last.op}`);
   setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
                               state.isRecording ? '録音中' : '停止'), 2200);
 }
 
-function updateUndoButton() {
-  const btn = document.getElementById('btn-undo');
-  if (!btn) return;
-  btn.disabled = undoStack.length === 0;
-  const last = undoStack[undoStack.length - 1];
-  btn.title = last
-    ? `戻す: ${last.op} (Ctrl+Z)`
-    : '戻す（AI整形等の操作を元に戻す） — 戻せる操作なし';
+function doRedo() {
+  if (redoStack.length === 0) {
+    setStatus('idle', 'やり直せる操作がありません');
+    setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
+                                state.isRecording ? '録音中' : '停止'), 1800);
+    return;
+  }
+  // 現在状態を Undo に退避
+  const current = _makeSnapshot(redoStack[redoStack.length - 1].op);
+  if (current) {
+    undoStack.push(current);
+    while (undoStack.length > MAX_UNDO_ENTRIES) undoStack.shift();
+    saveUndoStack();
+  }
+  const next = redoStack.pop();
+  saveRedoStack();
+  if (!_applySnapshot(next)) {
+    setStatus('error', 'Redo対象のセッションが見つかりません');
+    updateUndoRedoButtons();
+    return;
+  }
+  updateUndoRedoButtons();
+  diagLog.info(`Redo実行: ${next.op}`);
+  setStatus('idle', `やり直しました: ${next.op}`);
+  setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
+                              state.isRecording ? '録音中' : '停止'), 2200);
 }
+
+function updateUndoRedoButtons() {
+  const undoBtn = document.getElementById('btn-undo');
+  const redoBtn = document.getElementById('btn-redo');
+  if (undoBtn) {
+    undoBtn.disabled = undoStack.length === 0;
+    const last = undoStack[undoStack.length - 1];
+    undoBtn.title = last ? `戻す: ${last.op} (Ctrl+Z)` : '戻す — 戻せる操作なし';
+  }
+  if (redoBtn) {
+    redoBtn.disabled = redoStack.length === 0;
+    const next = redoStack[redoStack.length - 1];
+    redoBtn.title = next ? `やり直す: ${next.op} (Ctrl+Shift+Z / Ctrl+Y)` : 'やり直す — なし';
+  }
+}
+// 旧名との互換（既存呼び出しを壊さない）
+function updateUndoButton() { updateUndoRedoButtons(); }
 
 function toggleAi() {
   if (!state.settings.apiKey) { openSettings(); return; }
@@ -5003,17 +5079,29 @@ enableHorizontalWheelScroll(document.getElementById('controls'));
 enableHorizontalWheelScroll(document.getElementById('tabs'));
 enableHorizontalWheelScroll(document.getElementById('inner-tabs'));
 
-/* Undo ボタン / Ctrl+Z */
-(function bindUndo() {
-  const btn = document.getElementById('btn-undo');
-  if (btn) btn.addEventListener('click', doUndo);
-  updateUndoButton();
+/* Undo / Redo ボタン と Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y */
+(function bindUndoRedo() {
+  const undoBtn = document.getElementById('btn-undo');
+  const redoBtn = document.getElementById('btn-redo');
+  if (undoBtn) undoBtn.addEventListener('click', doUndo);
+  if (redoBtn) redoBtn.addEventListener('click', doRedo);
+  updateUndoRedoButtons();
 
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-      // 編集中フィールドでのネイティブ Undo は邪魔しない
-      const t = e.target;
-      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    const isMod = e.ctrlKey || e.metaKey;
+    if (!isMod) return;
+    // 編集中フィールドでのネイティブ Undo/Redo は邪魔しない
+    const t = e.target;
+    const inEditable = t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+    if (inEditable) return;
+    // Ctrl+Shift+Z or Ctrl+Y → Redo
+    if ((e.key === 'z' && e.shiftKey) || e.key === 'Z' && e.shiftKey || e.key === 'y' || e.key === 'Y') {
+      e.preventDefault();
+      doRedo();
+      return;
+    }
+    // Ctrl+Z → Undo
+    if (e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
       doUndo();
     }
