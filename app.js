@@ -695,6 +695,90 @@ async function retryPendingRefinements({ showFeedback = true } = {}) {
   return { tried: pending.length, ok, failed };
 }
 
+/**
+ * 全文字起こしを丸ごと文脈付き再整形＋見出し付与（「今すぐ整形」ボタン本体が呼ぶ）。
+ * 現状が「既に整形済み」「短チャンクだけ」「needs-retry混在」のどれであっても、
+ * 上から下までまとめて Gemini に送り直して 1つの整った文書として再構築する。
+ * ミドル整形を全体に拡張した版。
+ */
+async function refineWholeTranscript({ showFeedback = true } = {}) {
+  if (!state.settings.apiKey) {
+    if (showFeedback) { alert('Gemini API キーが未設定です'); openSettings(); }
+    return;
+  }
+
+  const container = getWriteContainer();
+  const paragraphs = Array.from(container.querySelectorAll('.paragraph'));
+
+  // 全パラグラフを "## 見出し\n\n 本文" 形式に寄せて連結、構造外テキストも末尾へ
+  let allText = paragraphs.map(p => {
+    const h2 = p.querySelector('h2');
+    const body = p.querySelector('.p-body');
+    if (h2 && body) return `## ${h2.textContent.trim()}\n\n${body.innerText.trim()}`;
+    return (p.innerText || p.textContent || '').trim();
+  }).filter(Boolean).join('\n\n');
+
+  // パラグラフに入っていない生テキストも拾う
+  const unstructured = Array.from(container.childNodes).filter(n => {
+    if (n.nodeType === Node.TEXT_NODE) return !!n.textContent.trim();
+    if (n.nodeType === Node.ELEMENT_NODE) return !n.classList || !n.classList.contains('paragraph');
+    return false;
+  }).map(n => (n.nodeType === Node.TEXT_NODE ? n.textContent : (n.innerText || n.textContent || '')).trim())
+    .filter(Boolean).join('\n\n');
+  if (unstructured) allText = (allText ? allText + '\n\n' : '') + unstructured;
+
+  if (!allText.trim()) {
+    if (showFeedback) setStatus('idle', '整形対象のテキストがありません');
+    return;
+  }
+
+  // Gemini の出力トークン上限（約2048）超過の可能性を警告
+  if (allText.length > 8000) {
+    if (!confirm(`文字起こしが ${allText.length} 文字あります。全体整形すると出力が途中で切れる可能性があります。\n\n続けますか？（「いいえ」なら整形を中止します）`)) return;
+  }
+
+  // 全部消して refining プレースホルダを置く
+  paragraphs.forEach(p => p.remove());
+  Array.from(container.childNodes).forEach(n => {
+    if (n.nodeType === Node.TEXT_NODE) n.remove();
+    else if (n.nodeType === Node.ELEMENT_NODE && !n.classList.contains('paragraph')) n.remove();
+  });
+  const target = createParagraphEl('（全体整形中…）', 'paragraph refining');
+  container.appendChild(target);
+
+  const inBg = container !== els.confirmed;
+  const persist = () => {
+    if (inBg) syncBgToSession();
+    else snapshotActiveToSession();
+    persistSessions();
+  };
+  if (inBg) syncBgToSession(); else autoScroll();
+  diagLog.info(`全体整形開始: ${allText.length}字`);
+
+  try {
+    const refined = await refineWithGemini({
+      apiKey: state.settings.apiKey,
+      context: '',    // 全体が1回分のコンテキスト
+      newChunk: allText,
+    });
+    target.className = 'paragraph refined';
+    setParagraphContent(target, refined || allText);
+    persist();
+    diagLog.info(`全体整形完了: ${(refined || allText).length}字`);
+    if (!inBg) { updateActionButtons(); autoScroll(); }
+  } catch (e) {
+    console.warn('[refine whole] failed:', e.message || e);
+    target.className = 'paragraph needs-retry';
+    setParagraphContent(target, allText);
+    persist();
+    if (showFeedback) {
+      setStatus('error', '全体整形失敗: ' + (e.message || '').slice(0, 60));
+      setTimeout(() => setStatus(state.isRecording ? 'listening' : 'idle',
+                                  state.isRecording ? '録音中' : '停止'), 4000);
+    }
+  }
+}
+
 /* ───────── ミドル整形（短チャンクを蓄積→文脈込みで再整形＋見出し付与） ─────────
  * Geminiオーディオ録音の短チャンクは個別に文字起こしされるが、見出しが付かず
  * 誤字が残ることがある。3段落溜まるか 60秒経ったら refineWithGemini で
@@ -4388,7 +4472,7 @@ els.confirmed.addEventListener('paste', () => {
   setTimeout(() => { refineUnstructuredInTranscript({ showFeedback: false }); }, 150);
 });
 
-// 文字起こし整形コンボ: ノブ=自動ON/OFFトグル、本体=今すぐ整形
+// 文字起こし整形コンボ: ノブ=自動ON/OFFトグル、本体=全体を一括ミドル整形（見出し付け）
 if (els.btnRefineTranscript) {
   els.btnRefineTranscript.addEventListener('click', async (e) => {
     const hit = e.target.closest('[data-role]');
@@ -4396,17 +4480,12 @@ if (els.btnRefineTranscript) {
     if (role === 'toggle') {
       toggleAi();
     } else {
+      // 本体クリック: トグルON/OFFに関わらず、全体を上から下までまとめて文脈込みで
+      // 再整形＋見出し付け。既に整形済みのテキストも一度に整う。
       if (!state.settings.apiKey) { openSettings(); return; }
       els.btnRefineTranscript.classList.add('firing');
       try {
-        // 貼付け等の未整形テキストを先に整形
-        await refineUnstructuredInTranscript({ force: true, showFeedback: true });
-        // ショートチャンク（Geminiオーディオ由来）を強制的に統合整形（見出し付け）
-        const container = getWriteContainer();
-        const shorts = Array.from(container.querySelectorAll('.paragraph.short-refined'));
-        if (shorts.length > 0) await consolidateShortChunks(shorts);
-        // 失敗した needs-retry の再試行
-        await retryPendingRefinements({ showFeedback: true });
+        await refineWholeTranscript({ showFeedback: true });
       } finally {
         els.btnRefineTranscript.classList.remove('firing');
       }

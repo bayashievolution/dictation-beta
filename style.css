@@ -209,15 +209,26 @@ html, body {
 }
 
 /* ───────── Controls ───────── */
+/* コントロールバー: 画面が狭い時は2行化せず横スクロールで収める
+ * （縦スペースを奪われて文字起こし領域が狭くなるのを防ぐ） */
 #controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   padding: 10px 14px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: no-drag;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+/* 子要素（ボタン）は縮まず横並びを維持 */
+#controls > * { flex-shrink: 0; }
+/* コントロールバーの横スクロールバーは一段細く */
+#controls::-webkit-scrollbar { height: 4px; }
 
 .btn {
   display: inline-flex;
