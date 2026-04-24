@@ -732,9 +732,12 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
     return;
   }
 
-  // Gemini の出力トークン上限（約2048）超過の可能性を警告
-  if (allText.length > 8000) {
-    if (!confirm(`文字起こしが ${allText.length} 文字あります。全体整形すると出力が途中で切れる可能性があります。\n\n続けますか？（「いいえ」なら整形を中止します）`)) return;
+  // Gemini 2.5 Flash の出力上限は 8192 tokens（日本語で約6000〜8000字）。
+  // 18000字を超えたら出力切れリスクが高いので警告、30000字以上は中止推奨。
+  if (allText.length > 30000) {
+    if (!confirm(`文字起こしが ${allText.length} 文字もあります。Geminiの1回出力上限を大きく超えるので、後半が切れます。\n\n録音をいくつかに分けて整形するのがおすすめ。それでも試しますか？`)) return;
+  } else if (allText.length > 18000) {
+    if (!confirm(`文字起こしが ${allText.length} 文字あります。出力が途中で切れる可能性があります。\n\n続けますか？`)) return;
   }
 
   // 全部消して refining プレースホルダを置く
@@ -743,7 +746,7 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
     if (n.nodeType === Node.TEXT_NODE) n.remove();
     else if (n.nodeType === Node.ELEMENT_NODE && !n.classList.contains('paragraph')) n.remove();
   });
-  const target = createParagraphEl('（全体整形中…）', 'paragraph refining');
+  const target = createParagraphEl('（全体整形中… しばらくお待ちください）', 'paragraph refining');
   container.appendChild(target);
 
   const inBg = container !== els.confirmed;
@@ -756,10 +759,12 @@ async function refineWholeTranscript({ showFeedback = true } = {}) {
   diagLog.info(`全体整形開始: ${allText.length}字`);
 
   try {
+    // Gemini 2.5 Flash の出力上限いっぱい（8192 tokens）まで使って長文対応
     const refined = await refineWithGemini({
       apiKey: state.settings.apiKey,
-      context: '',    // 全体が1回分のコンテキスト
+      context: '',              // 全体が1回分のコンテキスト
       newChunk: allText,
+      maxOutputTokens: 8192,    // 既定の2048 → 8192 に引き上げ（6000〜8000字出せる）
     });
     target.className = 'paragraph refined';
     setParagraphContent(target, refined || allText);

@@ -193,7 +193,7 @@ async function _callGemini(body, apiKey, { maxRetries = 2, retryBaseMs = 800 } =
   throw lastErr || new Error('Gemini 呼び出し失敗（リトライ上限）');
 }
 
-async function refineWithGemini({ apiKey, context, newChunk }) {
+async function refineWithGemini({ apiKey, context, newChunk, maxOutputTokens = 2048 }) {
   if (!apiKey) throw new Error('Gemini API キーが設定されていません');
   if (!newChunk || !newChunk.trim()) return '';
 
@@ -224,7 +224,7 @@ async function refineWithGemini({ apiKey, context, newChunk }) {
     generationConfig: {
       temperature: 0.3,
       topP: 0.9,
-      maxOutputTokens: 2048,
+      maxOutputTokens,
       responseMimeType: 'text/plain',
     },
   };
