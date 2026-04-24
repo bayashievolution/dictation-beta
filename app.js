@@ -4766,3 +4766,26 @@ renderTabs();
 loadActiveSessionIntoDOM();
 updateActionButtons();
 startAutoSave();
+
+/**
+ * 横スクロール領域でマウスホイールを回したら左右にスクロールさせる。
+ * - 実際に横オーバーフローしてる時だけ効かせる（縦方向の親スクロールを邪魔しない）
+ * - トラックパッドが既に deltaX を送ってくる場合はネイティブに任せる
+ * - Shiftキー押しながらのホイールも deltaY を使って動くよう対応（Shift+wheel標準）
+ */
+function enableHorizontalWheelScroll(el) {
+  if (!el || el.__hwheelWired) return;
+  el.__hwheelWired = true;
+  el.addEventListener('wheel', (e) => {
+    if (el.scrollWidth <= el.clientWidth) return;
+    // トラックパッドの横スワイプ等で deltaX のほうが大きい場合はネイティブ挙動
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    // 縦ホイールを横スクロールに変換
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  }, { passive: false });
+}
+// コントロールバー・外タブ・内タブの3つに適用
+enableHorizontalWheelScroll(document.getElementById('controls'));
+enableHorizontalWheelScroll(document.getElementById('tabs'));
+enableHorizontalWheelScroll(document.getElementById('inner-tabs'));
