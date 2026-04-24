@@ -2371,6 +2371,80 @@ function _topForSession(stack, sessionId) {
   return -1;
 }
 
+/** 任意の content 文字列を指定して Undo スタックに積む（タイピング用） */
+function pushUndoSnapshot(paneId, opLabel, content) {
+  if (!PANE_FIELD[paneId]) return;
+  const sess = getActiveSession();
+  if (!sess) return;
+  const s = paneStacks[paneId];
+  s.undo.push({
+    sessionId: sess.id,
+    content: content != null ? content : '',
+    ts: Date.now(),
+    op: opLabel || '編集',
+  });
+  while (s.undo.length > MAX_UNDO_ENTRIES) s.undo.shift();
+  s.redo = [];
+  _persistPaneStack(paneId);
+  updatePaneUndoRedoButtons();
+}
+
+/* ───── タイピングの Undo スナップショット ─────
+ * 各ペインの contenteditable への user input を 2秒でデバウンスして、
+ * 打ち始める前の状態を Undo スタックに積む。
+ * loadActiveSessionIntoDOM / _applyPaneSnapshot 等のプログラム側変更では
+ * syncPaneBaselineFromDOM() で baseline を更新して、誤ったスナップショットを防ぐ。 */
+const paneLastStable = {
+  'pane-transcript': '',
+  'pane-memo': '',
+  'pane-summary': '',
+};
+const paneTypingTimers = {};
+
+function syncPaneBaselineFromDOM() {
+  if (els.confirmed) paneLastStable['pane-transcript'] = els.confirmed.innerHTML;
+  if (els.memo)      paneLastStable['pane-memo']       = els.memo.innerHTML;
+  if (els.summary)   paneLastStable['pane-summary']    = els.summary.innerHTML;
+}
+
+function bindPaneTypingUndo() {
+  const targets = [
+    { paneId: 'pane-transcript', el: els.confirmed },
+    { paneId: 'pane-memo',       el: els.memo },
+    { paneId: 'pane-summary',    el: els.summary },
+  ];
+  for (const { paneId, el } of targets) {
+    if (!el || el.__typingUndoWired) continue;
+    el.__typingUndoWired = true;
+    paneLastStable[paneId] = el.innerHTML;
+
+    const onTypingBurst = () => {
+      if (paneTypingTimers[paneId]) clearTimeout(paneTypingTimers[paneId]);
+      paneTypingTimers[paneId] = setTimeout(() => {
+        paneTypingTimers[paneId] = null;
+        const current = el.innerHTML;
+        // 差分なし or 打ち始める前の state が未把握 → スキップ
+        if (current === paneLastStable[paneId]) return;
+        pushUndoSnapshot(paneId, '編集', paneLastStable[paneId]);
+        paneLastStable[paneId] = current; // 新しい基準に更新
+      }, 2000);
+    };
+
+    el.addEventListener('input', onTypingBurst);
+    // フォーカスアウト時に未確定のバーストを即スナップ
+    el.addEventListener('blur', () => {
+      if (!paneTypingTimers[paneId]) return;
+      clearTimeout(paneTypingTimers[paneId]);
+      paneTypingTimers[paneId] = null;
+      const current = el.innerHTML;
+      if (current !== paneLastStable[paneId]) {
+        pushUndoSnapshot(paneId, '編集', paneLastStable[paneId]);
+        paneLastStable[paneId] = current;
+      }
+    });
+  }
+}
+
 /**
  * 破壊的操作の直前に呼ぶ。対象ペインの現状をUndoスタックに積む。
  * Redoスタックはクリア（新操作後はRedoできないため）。
@@ -3596,13 +3670,20 @@ function getActiveSession() {
   return state.sessions.find(s => s.id === state.activeId);
 }
 
-function snapshotActiveToSession() {
+function snapshotActiveToSession(opts = {}) {
   const s = getActiveSession();
   if (!s) return;
   s.transcript = els.confirmed.innerHTML;
   s.memo = els.memo.innerHTML;
   s.summary = els.summary.innerHTML;
   s.updatedAt = Date.now();
+  // タイピングUndoの baseline も同期（autosave 由来の場合はスキップ：
+  // ユーザーが入力中の可能性があり、baseline を上書きすると履歴が流れるため）
+  if (!opts.fromAutosave && typeof paneLastStable !== 'undefined') {
+    paneLastStable['pane-transcript'] = s.transcript;
+    paneLastStable['pane-memo']       = s.memo;
+    paneLastStable['pane-summary']    = s.summary;
+  }
 }
 
 function migrateMemoTaskItems() {
@@ -3634,6 +3715,8 @@ function loadActiveSessionIntoDOM() {
   renderTitleBar();
   // Undo/Redo ボタンはセッションごとにフィルタされるので、セッション切替時にも更新
   if (typeof updatePaneUndoRedoButtons === 'function') updatePaneUndoRedoButtons();
+  // タイピングUndoの基準状態をDOMから再同期（プログラム変更で baseline が古くなるのを防ぐ）
+  if (typeof syncPaneBaselineFromDOM === 'function') syncPaneBaselineFromDOM();
   state.userScrolledUp = false;
   requestAnimationFrame(() => autoScroll(true));
 }
@@ -4136,7 +4219,7 @@ async function regenTitleFromBar() {
 function startAutoSave() {
   if (state.autoSaveTimer) clearInterval(state.autoSaveTimer);
   state.autoSaveTimer = setInterval(() => {
-    snapshotActiveToSession();
+    snapshotActiveToSession({ fromAutosave: true });
     persistSessions();
   }, AUTOSAVE_INTERVAL_MS);
 }
@@ -5109,6 +5192,126 @@ renderTabs();
 loadActiveSessionIntoDOM();
 updateActionButtons();
 startAutoSave();
+// 文字起こし・メモ・要約の直接入力（キーボードタイピング）にも Undo/Redo を効かせる
+bindPaneTypingUndo();
+
+/* ───────── メモ: 選択範囲の整形（箇条書き→文章化 + 誤字訂正） ─────────
+ * メモ内で範囲選択してボタンを押すと、Gemini に送って整形。
+ * 訂正箇所は <mark class="mr-diff"> で一時的にハイライト（6秒後にフェード消去）。 */
+async function refineMemoSelection() {
+  if (!state.settings.apiKey) {
+    alert('Gemini API キーが未設定です。設定から登録してください。');
+    openSettings();
+    return;
+  }
+  const memo = els.memo;
+  if (!memo) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    alert('メモ内で文章を範囲選択してからボタンを押してください。');
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  // 選択範囲がメモ内にあるかチェック
+  if (!memo.contains(range.commonAncestorContainer) &&
+      range.commonAncestorContainer !== memo) {
+    alert('メモ内の範囲を選択してください。');
+    return;
+  }
+  const selectedText = (range.toString() || '').trim();
+  if (!selectedText) {
+    alert('選択範囲が空です。');
+    return;
+  }
+  if (selectedText.length < 5) {
+    alert('5文字以上を選択してください。');
+    return;
+  }
+
+  // Undo スナップショット
+  pushUndo(`選択範囲整形 (${selectedText.length}字)`, 'pane-memo');
+
+  // 選択範囲を「処理中…」の inline 要素で置き換える
+  const placeholder = document.createElement('span');
+  placeholder.className = 'mr-processing';
+  placeholder.textContent = '（整形中…）';
+  range.deleteContents();
+  range.insertNode(placeholder);
+  snapshotActiveToSession();
+  persistSessions();
+
+  const btn = document.getElementById('btn-memo-refine-selection');
+  if (btn) btn.classList.add('firing');
+  diagLog.info(`メモ選択整形開始: ${selectedText.length}字`);
+
+  try {
+    const refinedHtml = await window.refineMemoSelectionWithGemini({
+      apiKey: state.settings.apiKey,
+      text: selectedText,
+    });
+    // プレースホルダを実結果で置換。Gemini は <mark>...</mark> 付きテキストを返す想定。
+    // 安全のため mark 以外のタグを除去してからパース。
+    const safeHtml = sanitizeSelectionRefineHtml(refinedHtml || selectedText);
+    const tmpl = document.createElement('template');
+    tmpl.innerHTML = safeHtml.replace(/\n/g, '<br>');
+    const frag = tmpl.content.cloneNode(true);
+    // mark 要素にフェードアウトクラスをスケジュール
+    const marks = frag.querySelectorAll('mark');
+    marks.forEach(m => m.classList.add('mr-diff'));
+    placeholder.replaceWith(frag);
+    // 一定時間後にフェード、消去
+    setTimeout(() => {
+      memo.querySelectorAll('mark.mr-diff').forEach(m => m.classList.add('mr-diff-fade'));
+      setTimeout(() => {
+        memo.querySelectorAll('mark.mr-diff').forEach(m => {
+          const parent = m.parentNode;
+          while (m.firstChild) parent.insertBefore(m.firstChild, m);
+          parent.removeChild(m);
+          parent.normalize();
+        });
+        snapshotActiveToSession();
+        persistSessions();
+      }, 1500);
+    }, 6000);
+    snapshotActiveToSession();
+    persistSessions();
+    diagLog.info(`メモ選択整形完了: ${selectedText.length}字→${(refinedHtml || '').length}字`);
+  } catch (e) {
+    console.warn('[memo refine selection] failed:', e.message || e);
+    // プレースホルダを元テキストに戻す
+    placeholder.replaceWith(document.createTextNode(selectedText));
+    snapshotActiveToSession();
+    persistSessions();
+    setStatus('error', 'メモ整形失敗: ' + (e.message || '').slice(0, 60));
+    setTimeout(() => setStatus('idle', '停止'), 4000);
+  } finally {
+    if (btn) btn.classList.remove('firing');
+  }
+}
+
+/** Gemini の返したHTML文字列から許可タグ（mark/br）以外を除去 */
+function sanitizeSelectionRefineHtml(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_ELEMENT, null);
+  const toUnwrap = [];
+  const cur = walker.currentNode;
+  while (walker.nextNode()) {
+    const el = walker.currentNode;
+    const tag = el.tagName.toLowerCase();
+    if (tag !== 'mark' && tag !== 'br') toUnwrap.push(el);
+  }
+  for (const el of toUnwrap) {
+    const parent = el.parentNode;
+    if (!parent) continue;
+    while (el.firstChild) parent.insertBefore(el.firstChild, el);
+    parent.removeChild(el);
+  }
+  return tmp.innerHTML;
+}
+
+const btnMemoRefineSel = document.getElementById('btn-memo-refine-selection');
+if (btnMemoRefineSel) btnMemoRefineSel.addEventListener('click', refineMemoSelection);
 
 /**
  * 横スクロール領域でマウスホイールを回したら左右にスクロールさせる。

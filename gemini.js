@@ -557,9 +557,54 @@ async function formatForOSDWithGemini({ apiKey, text }) {
   return (out || '').trim();
 }
 
+/**
+ * メモ内の選択範囲を整形する。
+ * 箇条書きなら文章化、誤字脱字誤用を訂正。
+ * 元→整形後の差分が分かるよう、変更箇所を <mark class="mr-diff">...</mark> で
+ * 包んだ HTML を返すよう Gemini に指示。
+ */
+async function refineMemoSelectionWithGemini({ apiKey, text }) {
+  if (!apiKey) throw new Error('Gemini API キーが設定されていません');
+  if (!text || !text.trim()) return '';
+
+  const instruction = [
+    'あなたは日本語の文章編集者です。',
+    '以下のメモテキストを次のルールで整形してください。',
+    '',
+    'ルール:',
+    '- 箇条書きは文章にまとめ直す（冗長な繰り返しは削除、文脈で繋ぐ）',
+    '- 誤字・脱字・変換ミス・誤用を訂正',
+    '- 意味や事実は変えない、勝手に情報を足さない',
+    '- 句読点「、。」と改行を自然な位置に',
+    '- 固有名詞・専門用語・数字はそのまま維持',
+    '- 丁寧体/常体は入力に合わせる',
+    '',
+    '【重要】訂正したり書き換えたりした部分は、必ず <mark> タグで囲むこと。',
+    '例: もと「きょうはいい天気」→ 整形後「今日は<mark>いい</mark>天気です。」',
+    '訂正していない部分は <mark> を付けないこと。',
+    '',
+    '出力は整形後テキストのみ。前置き・説明・コードブロック・```等は付けないこと。',
+  ].join('\n');
+
+  const body = {
+    system_instruction: { parts: [{ text: instruction }] },
+    contents: [{ role: 'user', parts: [{ text: text }] }],
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens: 4096,
+      responseMimeType: 'text/plain',
+    },
+  };
+
+  const out = await _callGemini(body, apiKey, { maxRetries: 1 });
+  return (out || '').trim();
+}
+
 window.refineWithGemini = refineWithGemini;
 window.summarizeWithGemini = summarizeWithGemini;
 window.generateTitleWithGemini = generateTitleWithGemini;
 window.chatWithGemini = chatWithGemini;
 window.transcribeAudioWithGemini = transcribeAudioWithGemini;
 window.formatForOSDWithGemini = formatForOSDWithGemini;
+window.refineMemoSelectionWithGemini = refineMemoSelectionWithGemini;
