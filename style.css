@@ -664,6 +664,35 @@ html, body {
   overflow-y: hidden;
 }
 
+/* 内側タブのリストラッパ。アクティブ線 indicator の position:absolute 基準 */
+.inner-tabs-list {
+  display: flex;
+  gap: 0;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* 内側タブのアクティブ色線（外側タブと同じ滑るアニメーション） */
+.inner-tab-active-indicator {
+  position: absolute;
+  bottom: -1px;   /* 内側タブは下の border-bottom に重なる位置 */
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transform: translateX(0);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.16s;
+  will-change: transform, width;
+}
+.inner-tab-active-indicator.visible { opacity: 1; }
+
 .inner-tab {
   display: inline-flex;
   align-items: center;
@@ -675,8 +704,8 @@ html, body {
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s var(--ease-snap);
-  border-bottom: 2px solid transparent;
+  transition: color 0.15s var(--ease-snap), background 0.15s var(--ease-snap);
+  border-bottom: 2px solid transparent; /* レイアウト維持用（色は indicator が担当） */
   margin-bottom: -1px;
   flex-shrink: 0;
   white-space: nowrap;
@@ -689,7 +718,7 @@ html, body {
 
 .inner-tab.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  /* border-bottom-color は indicator に移譲（スライドアニメ用） */
 }
 
 .inner-tab {

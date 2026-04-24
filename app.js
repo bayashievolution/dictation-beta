@@ -2369,7 +2369,21 @@ function applyPaneOrder() {
 }
 
 function renderInnerTabs() {
-  els.innerTabsContainer.innerHTML = '';
+  // 内側ラッパ .inner-tabs-list が無ければ作る（外側タブの #tabs-list と同構造）
+  // これでアクティブ線 indicator が位置: relative の基準を持てる
+  let listEl = els.innerTabsContainer.querySelector('.inner-tabs-list');
+  if (!listEl) {
+    els.innerTabsContainer.innerHTML = '';
+    listEl = document.createElement('div');
+    listEl.className = 'inner-tabs-list';
+    els.innerTabsContainer.appendChild(listEl);
+  }
+
+  // renderTabs と同じく indicator を renderInnerTabs を跨いで保持
+  let indicator = listEl.__activeIndicator;
+  if (indicator && indicator.parentElement === listEl) indicator.remove();
+
+  listEl.innerHTML = '';
   for (const id of state.settings.paneOrder) {
     const meta = PANE_META[id];
     if (!meta) continue;
@@ -2378,14 +2392,52 @@ function renderInnerTabs() {
     btn.dataset.pane = id;
     btn.innerHTML = `<span class="inner-tab-icon" data-icon="${meta.icon}"></span>${meta.label}`;
     btn.addEventListener('click', () => switchInnerPane(id));
-    els.innerTabsContainer.appendChild(btn);
+    listEl.appendChild(btn);
   }
-  renderIcons(els.innerTabsContainer);
-  enablePointerDragSort(els.innerTabsContainer, {
+
+  // indicator を再アペンド（新規なら作る）
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.className = 'inner-tab-active-indicator';
+    listEl.__activeIndicator = indicator;
+  }
+  listEl.appendChild(indicator);
+
+  renderIcons(listEl);
+  enablePointerDragSort(listEl, {
     itemSelector: '.inner-tab',
     idAttr: 'pane',
     onReorder: reorderPaneOrder,
   });
+
+  requestAnimationFrame(updateInnerTabsIndicator);
+}
+
+/* 内側タブのアクティブ線を現在位置に滑らす */
+function updateInnerTabsIndicator() {
+  const listEl = els.innerTabsContainer && els.innerTabsContainer.querySelector('.inner-tabs-list');
+  const bar = listEl && listEl.__activeIndicator;
+  if (!bar) return;
+  const activeTab = listEl.querySelector('.inner-tab.active');
+  if (!activeTab) {
+    bar.classList.remove('visible');
+    return;
+  }
+  const x = activeTab.offsetLeft;
+  const w = activeTab.offsetWidth;
+  const firstShow = !bar.classList.contains('visible');
+  if (firstShow) {
+    const saved = bar.style.transition;
+    bar.style.transition = 'none';
+    bar.style.transform = `translateX(${x}px)`;
+    bar.style.width = `${w}px`;
+    void bar.offsetWidth;
+    bar.style.transition = saved;
+    requestAnimationFrame(() => bar.classList.add('visible'));
+  } else {
+    bar.style.transform = `translateX(${x}px)`;
+    bar.style.width = `${w}px`;
+  }
 }
 
 function reorderPaneOrder(newOrder) {
@@ -2905,6 +2957,9 @@ function enablePointerDragSort(list, opts) {
       if (typeof updateActiveTabIndicator === 'function') {
         setTimeout(() => updateActiveTabIndicator(), 340);
       }
+      if (typeof updateInnerTabsIndicator === 'function') {
+        setTimeout(() => updateInnerTabsIndicator(), 340);
+      }
     }
     clearHighlights();
     try { list.releasePointerCapture(pointerId); } catch {}
@@ -3163,6 +3218,8 @@ function switchInnerPane(paneId) {
 
   state.activePane = paneId;
   els.innerTabsContainer.querySelectorAll('.inner-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === paneId));
+  // アクティブ線（下の色バー）を新しいアクティブタブへ滑らす
+  if (typeof updateInnerTabsIndicator === 'function') updateInnerTabsIndicator();
   const panes = [els.paneTranscript, els.paneMemo, els.paneSummary, els.paneChat];
   panes.forEach(p => {
     p.classList.toggle('active', p.id === paneId);
@@ -4040,6 +4097,7 @@ document.querySelector('#onboarding .onboarding-overlay')?.addEventListener('cli
 window.addEventListener('resize', () => {
   if (!document.getElementById('onboarding').classList.contains('hidden')) onboardingPosition();
   updateActiveTabIndicator();
+  if (typeof updateInnerTabsIndicator === 'function') updateInnerTabsIndicator();
 });
 if (els.btnSummaryCombo) {
   els.btnSummaryCombo.addEventListener('click', async (e) => {
