@@ -4578,7 +4578,13 @@ let editSaveTimer = null;
 function onEdit() {
   updateActionButtons();
   if (editSaveTimer) clearTimeout(editSaveTimer);
-  editSaveTimer = setTimeout(() => { snapshotActiveToSession(); persistSessions(); }, 800);
+  // 800ms入力アイドル後の自動保存。fromAutosave:true を必ず付ける。
+  // これを付けないと paneLastStable がここで毎回 DOM 現在値にリセットされ、
+  // タイピングUndoの 20字閾値が永久に発火しなくなる（v0.12.16 修正）。
+  editSaveTimer = setTimeout(() => {
+    snapshotActiveToSession({ fromAutosave: true });
+    persistSessions();
+  }, 800);
 }
 els.confirmed.addEventListener('input', onEdit);
 els.memo.addEventListener('input', onEdit);
