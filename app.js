@@ -134,13 +134,12 @@ const DEFAULT_SETTINGS = {
   webspeechInterimDebounceMs: 300, // 0=即時, 100/300/800 推奨。0 にすれば最も速い
   webspeechInterimOpacity: 70,     // 0-100。100 で確定文字と区別なし、低いほど薄く
   // Web Speech モードの強制 commit（チャンク間隔）設定 (v0.13.14〜)
-  // - 0 にすると WebSpeech 任せ（既存挙動）、N 秒にすると N 秒ごとに recognition.stop()
-  //   を呼んで「ここまで」と区切らせる。
-  // - v0.13.15: Web Speech の自動 final 区切りがそもそも頻繁で、stop ベースだと
-  //   かえって短い文節が頻繁に出る副作用が判明。代わりに字幕表示側を「自動行スクロール」
-  //   モードにする方向に切替。本機能はコード保持のまま既定 0（OFF）に戻して UI も隠す。
-  //   後で再活用したくなったら captions.html / app.js で hidden を外せば復活する。
-  webspeechCommitSec: 0,
+  // - 0 にすると WebSpeech 任せ、N 秒にすると N 秒ごとに recognition.stop() を呼んで
+  //   「ここまで」と区切らせる。これが字幕の「ちょうどいい塊感」の鍵。
+  // - v0.13.20 でうかつに撤去したが、やっさんから「最初の状態に戻った」と即指摘され
+  //   v0.13.21 で revert。実は本機能が Web Speech 字幕成功の根幹だった。
+  // - 既定 6 秒（やっさんが実機で「ちょうどよい」と判断したリズム）。v0.13.22。
+  webspeechCommitSec: 6,
 };
 const WEB_SPEECH_DEFAULTS = {
   webspeechInterimDebounceMs: 300,
