@@ -650,7 +650,13 @@ function appendRawChunk(text) {
   // Gemini Audio の 6 秒チャンク = 1 段落、と対称的な構造になる。
   const forceNewPara = state.settings.inputMode === 'web-speech';
   if (forceNewPara || !state.pendingChunkEl || !container.contains(state.pendingChunkEl)) {
-    state.pendingChunkEl = createParagraphEl(text, 'paragraph raw');
+    // v0.13.31: Web Speech モードの final 毎段落にも .short-refined と dataset.shortTs を付与。
+    // これでショート整形（flushPendingToGemini）が即発火対象になり、ミドル整形
+    // （consolidateShortChunks）も .short-refined を拾って 3 段落単位で統合・見出し付与する。
+    // やっさん発「喋り通しても整形されるように、final のチャンクに合わせて整形」の実装。
+    const klass = forceNewPara ? 'paragraph raw short-refined' : 'paragraph raw';
+    state.pendingChunkEl = createParagraphEl(text, klass);
+    if (forceNewPara) state.pendingChunkEl.dataset.shortTs = String(Date.now());
     container.appendChild(state.pendingChunkEl);
     state.pendingChunkText = text;
   } else {
@@ -677,6 +683,19 @@ function appendRawChunk(text) {
   // 「ブロックが溜まってから一気に流れる」症状が出ていた。
   // Gemini Audio は sendAudioChunkToGemini 内で persist しているので問題なかった。
   persistSessions();
+  // v0.13.31: Web Speech final 毎にショート整形を即発火（無音 3 秒待ちじゃない）。
+  // やっさん発「岡田斗司夫を喋り通しても整形されるように、final のチャンクに合わせて整形」の実装。
+  // flushPendingToGemini は state.pendingChunkEl をローカルに退避してから state を null クリア
+  // するので、次の appendRawChunk 呼び出しと競合しない。
+  // 喋りが速くて整形が追いつかない場合は、未整形段落が .short-refined のまま残り、
+  // 既存のミドル整形（maybeConsolidateShortChunks、3 段落 or 60 秒）が拾って統合・見出し付け。
+  if (
+    state.settings.inputMode === 'web-speech' &&
+    state.settings.aiEnabled &&
+    state.settings.apiKey
+  ) {
+    flushPendingToGemini();
+  }
 }
 
 function getContextForGemini() {

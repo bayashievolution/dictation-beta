@@ -342,6 +342,62 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 ---
 
+### 2026-04-26 v0.13.31 final 毎ショート整形（喋り通しても整形される）
+
+**背景**：v0.13.31 までは AI 整形（ショート＝誤字脱字、ミドル＝文脈再整形）が
+喋り通しでは走らなかった。原因：
+- ショート整形（`flushPendingToGemini`）は `resetSilenceTimer` で 3 秒無音待ち
+  → onresult が連続で来ると毎回タイマーリセット → 永遠に発火しない
+- ミドル整形（`consolidateShortChunks`）は `.short-refined` クラスの段落を集めて
+  3 段落 or 60 秒で統合・見出し付け → ただし `.short-refined` は **Gemini Audio 専用**
+  のマーク（[app.js:1558](app.js:1558)）で、Web Speech モードでは付いていなかった
+
+やっさんから「岡田斗司夫を喋り通しで聞くと整形が走らない、final のチャンクに
+合わせて整形しよう。ショート/ミドル両方の仕組みは残ってるよね？」と提案。
+
+**実装**：
+1. `appendRawChunk` で **Web Speech モード時の final 毎段落**にも `.short-refined`
+   クラスと `dataset.shortTs` を付与（既存のミドル整形対象に組み込み）
+2. `appendRawChunk` の末尾で **`flushPendingToGemini` を即発火**（無音 3 秒待ちじゃない）
+   ただし条件：Web Speech モード + `aiEnabled` + `apiKey` あり
+3. `flushPendingToGemini` 自体は無修正（`.short-refined` が `refining` で外れるのは、
+   「整形中はミドル整形対象外」という仕様として正しい）
+
+**動作の流れ**（Web Speech + AI 整形 ON、喋り通しの場合）：
+
+```
+[final 来る] → appendRawChunk → 段落 N（.short-refined）作成
+              → flushPendingToGemini 即発火 → 段落 N が .refining に
+              → Gemini API（数秒）
+
+[次の final 来る] → 段落 N+1（.short-refined）作成
+                    → flushPendingToGemini → 段落 N+1 が .refining に（並列）
+
+[段落 N の整形完了] → .refined に
+[段落 N+1 の整形完了] → .refined に
+...
+
+[整形が追いつかない場合] → 段落 N, N+1, N+2 が .short-refined のまま溜まる
+                            → 60 秒経過 or 3 段落で maybeConsolidateShortChunks 発火
+                            → ミドル整形（文脈込み統合・見出し付け）
+```
+
+**注意点**：
+- 並列で複数段落が `.refining` になり得る。各 flushPendingToGemini は state を
+  ローカル退避してから null クリアするので競合しない
+- API コスト：30 字 slice + final 毎整形だと、頻度高め。Gemini 2.5 Flash 無料枠で
+  足りない場合は要監視。問題出たら並列数制限（state.webspeechRefineInFlight 等）を追加検討
+- 字幕への影響：整形完了で transcript HTML が更新 → captions.js が再描画。整形対象が
+  字幕外（最新 N 段落の外）に押し出されていれば影響なし。チラつくようなら別途対処
+
+**やっさんの確認**：
+> 字幕と整形機能を同時におこなっても大丈夫よね？字幕はバッファに入れたものを描画するからね
+
+→ ほぼ大丈夫。整形対象が最新 N 段落以内にまだいる場合は字幕がリフレッシュされて
+整形済みテキストに置き換わる可能性あり（実用上は喋り通しなら次の段落で押し出される）。
+
+---
+
 ### 2026-04-26 v0.13.31 無音 stop（短い発話取りこぼし防止）
 
 **背景**：v0.13.31 の改行文字数（30字）は、達するまで字幕に流さない。
