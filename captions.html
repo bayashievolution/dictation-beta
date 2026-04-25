@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.12.16" />
+  <link rel="stylesheet" href="captions.css?v=0.13.0" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
@@ -35,6 +35,7 @@
       <button id="cap-btn-fullscreen" class="cap-tool-btn" title="全画面">⛶</button>
       <button id="cap-btn-fit" class="cap-tool-btn" title="字幕ボックスをウィンドウ全体に広げて中央配置">⊞</button>
       <button id="cap-btn-osd" class="cap-tool-btn" title="OSDモード（UIを隠して字幕だけを大きく表示／右クリックで復帰）">📺</button>
+      <button id="cap-btn-overlay" class="cap-tool-btn" title="デスクトップオーバーレイに接続（OSレベル透過字幕）">🪟</button>
       <button id="cap-btn-reset-pos" class="cap-tool-btn" title="字幕ボックスの位置とサイズをリセット">⟳</button>
     </div>
   </div>
@@ -160,6 +161,30 @@
         </select>
       </div>
 
+      <div class="cap-field cap-overlay-section">
+        <label class="cap-label"><strong>🪟 ネイティブオーバーレイ連携</strong></label>
+        <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
+        <div class="cap-row cap-indent">
+          <button id="cap-overlay-connect" class="cap-btn-ghost">接続</button>
+          <button id="cap-overlay-test" class="cap-btn-ghost" disabled>テスト字幕送信</button>
+        </div>
+        <label class="cap-toggle cap-indent">
+          <input type="checkbox" id="cap-overlay-clickthrough" checked disabled />
+          <span>クリックスルー（位置調整したい時はOFFに）</span>
+        </label>
+        <div class="cap-row cap-indent">
+          <label class="cap-inline">表示モニタ</label>
+          <select id="cap-overlay-monitor" disabled>
+            <option value="">（未接続）</option>
+          </select>
+        </div>
+        <small class="cap-hint">
+          OSレベルの透過字幕（ネイティブヘルパー <strong>dictation-overlay</strong>）と連携します。
+          ZoomやMeet・他アプリの上に直接字幕が乗ります。
+          初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。
+        </small>
+      </div>
+
       <div class="cap-field cap-broadcast-section">
         <label class="cap-toggle cap-broadcast-toggle">
           <input type="checkbox" id="cap-broadcast-mode" />
@@ -183,7 +208,7 @@
     </div>
   </aside>
 
-  <script src="gemini.js?v=0.12.16"></script>
-  <script src="captions.js?v=0.12.16"></script>
+  <script src="gemini.js?v=0.13.0"></script>
+  <script src="captions.js?v=0.13.0"></script>
 </body>
 </html>

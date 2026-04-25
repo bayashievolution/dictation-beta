@@ -89,6 +89,7 @@ const els = {
   btnFullscreen: document.getElementById('cap-btn-fullscreen'),
   btnFit: document.getElementById('cap-btn-fit'),
   btnOsd: document.getElementById('cap-btn-osd'),
+  btnOverlay: document.getElementById('cap-btn-overlay'),
   btnResetPos: document.getElementById('cap-btn-reset-pos'),
   settings: document.getElementById('cap-settings'),
   settingsClose: document.getElementById('cap-settings-close'),
@@ -162,6 +163,9 @@ function applySettings() {
   root.style.setProperty('--cap-key-color', settings.keyColor);
   document.body.classList.toggle('broadcast-mode', !!settings.broadcastMode);
   updateKeyColorName();
+
+  // ネイティブオーバーレイにスタイルだけ更新を送る（接続中なら）
+  if (typeof sendOverlayStyleUpdate === 'function') sendOverlayStyleUpdate();
 }
 
 /** キー色の名前表示を更新（よくある色は日本語で） */
@@ -691,13 +695,55 @@ function renderTextIntoBox(html) {
   const tType = settings.transition || 'fade';
   if (tType === 'none') {
     els.text.innerHTML = html;
-    return;
+  } else {
+    // CSS アニメーションを一度リセット→適用（再トリガ）
+    els.text.classList.remove('anim-in');
+    void els.text.offsetWidth;
+    els.text.innerHTML = html;
+    els.text.classList.add('anim-in');
   }
-  // CSS アニメーションを一度リセット→適用（再トリガ）
-  els.text.classList.remove('anim-in');
-  void els.text.offsetWidth;
-  els.text.innerHTML = html;
-  els.text.classList.add('anim-in');
+
+  // ネイティブオーバーレイへも送信（接続中ならデバウンスで送る）
+  if (typeof scheduleOverlayCaption === 'function') {
+    scheduleOverlayCaption(htmlToCaptionText(html));
+  }
+}
+
+/** 字幕HTMLをネイティブ送信用のプレーンテキストに変換
+ *  - <br> → \n
+ *  - <p> 区切り → \n\n
+ *  - <span class="osd-cont">→</span> → そのまま「→」
+ */
+function htmlToCaptionText(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // <br> を改行に
+  tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  // 段落区切り
+  const paras = tmp.querySelectorAll('p');
+  if (paras.length === 0) {
+    return (tmp.textContent || '').replace(/\u00a0/g, ' ');
+  }
+  const lines = [];
+  paras.forEach(p => {
+    // 見出し付き段落: <strong>見出し</strong>\n本文 形式に
+    const strong = p.querySelector('strong');
+    let t;
+    if (strong) {
+      const heading = (strong.textContent || '').trim();
+      // strongを取り除いた残り
+      const clone = p.cloneNode(true);
+      const s2 = clone.querySelector('strong');
+      if (s2) s2.remove();
+      const body = (clone.textContent || '').replace(/^\s*\n+/, '').trim();
+      t = heading ? (body ? `${heading}\n${body}` : heading) : body;
+    } else {
+      t = (p.textContent || '').trim();
+    }
+    if (t) lines.push(t);
+  });
+  return lines.join('\n\n');
 }
 
 /** AI整形リクエストを 1.2秒 デバウンス */
@@ -736,6 +782,331 @@ function bindSync() {
   setInterval(renderLatest, 1000);
 }
 
+/* ───────── ネイティブオーバーレイ連携 (dictation-overlay v0.2.0) ─────────
+ * Chrome Native Messaging で別プロセス（ネイティブ字幕ウィンドウ）に
+ * 字幕テキストとスタイルを送り、OSレベルの透過オーバーレイで表示する。
+ * 仕様書：~/dictation-overlay/NATIVE_MESSAGING_SPEC.md (v0.2.0)
+ */
+
+const NATIVE_HOST = 'com.bayashi.dictation_overlay';
+const OVERLAY_DEBOUNCE_MS = 80;       // 仕様の 50〜100ms 推奨の中央値
+
+const overlayState = {
+  port: null,
+  connected: false,                    // ready 受信後 true
+  version: null,
+  platform: null,
+  capabilities: [],
+  monitors: [],
+  clickThrough: true,                  // 起動時のデフォルトはネイティブ側で ON
+  lastError: null,
+};
+
+function isOverlayConnected() {
+  return !!overlayState.port && overlayState.connected;
+}
+function hasOverlayCapability(cap) {
+  return overlayState.capabilities.includes(cap);
+}
+
+/** ネイティブ向け settings ペイロード組み立て（仕様 4.2 show_caption に準拠）*/
+function buildOverlaySettings() {
+  return {
+    fontSize: settings.fontSize,
+    fontFamily: settings.fontFamily,
+    fontWeight: Number(settings.fontWeight) || 600,
+    color: settings.color,
+    bgColor: settings.broadcastMode ? settings.keyColor : settings.bgColor,
+    bgAlpha: settings.broadcastMode ? 100 : settings.bgAlpha,
+    shadowOn: !!settings.shadowOn,
+    shadowColor: settings.shadowColor,
+    shadowBlur: Number(settings.shadowBlur) || 0,
+    strokeOn: !!settings.strokeOn && !settings.broadcastMode,
+    strokeColor: settings.strokeColor,
+    strokeWidth: Number(settings.strokeWidth) || 2,
+    lineHeightTenth: Number(settings.lineHeightTenth) || 14,
+  };
+}
+
+function connectNativeOverlay() {
+  if (overlayState.port) return;
+  if (!chrome?.runtime?.connectNative) {
+    overlayState.lastError = 'Native Messaging APIが利用できません';
+    onOverlayDisconnected();
+    return;
+  }
+  try {
+    overlayState.port = chrome.runtime.connectNative(NATIVE_HOST);
+    overlayState.port.onMessage.addListener(handleNativeMessage);
+    overlayState.port.onDisconnect.addListener(handleNativeDisconnect);
+    overlayState.lastError = null;
+    overlayState.connected = false;    // ready 受信を待つ
+    updateOverlayUI();
+  } catch (e) {
+    overlayState.port = null;
+    overlayState.lastError = e?.message || String(e);
+    onOverlayDisconnected();
+  }
+}
+
+function disconnectOverlay() {
+  if (!overlayState.port) return;
+  try { overlayState.port.disconnect(); } catch (_) {}
+  overlayState.port = null;
+  overlayState.connected = false;
+  onOverlayDisconnected();
+}
+
+function handleNativeMessage(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  switch (msg.type) {
+    case 'ready':
+      overlayState.connected = true;
+      overlayState.version = msg.version || '?';
+      overlayState.platform = msg.platform || '?';
+      overlayState.capabilities = Array.isArray(msg.capabilities) ? msg.capabilities : [];
+      overlayState.lastError = null;
+      // モニタ情報を要求（multi-monitor 対応時のみ）
+      if (hasOverlayCapability('multi-monitor')) {
+        try { overlayState.port.postMessage({ type: 'list_monitors' }); } catch {}
+      }
+      updateOverlayUI();
+      // 直近の字幕を即時送信
+      flushOverlayCaption();
+      break;
+    case 'pong':
+      break;
+    case 'error':
+      overlayState.lastError = `${msg.code || 'error'}: ${msg.message || ''}`;
+      console.warn('[overlay error]', msg);
+      updateOverlayUI();
+      break;
+    case 'click_through':
+      overlayState.clickThrough = !!msg.enabled;
+      updateOverlayUI();
+      break;
+    case 'monitor_list':
+      overlayState.monitors = Array.isArray(msg.monitors) ? msg.monitors : [];
+      updateOverlayUI();
+      break;
+    case 'position_changed':
+      // Phase 3 で対応予定
+      break;
+    default:
+      // 未知 type は無視
+      break;
+  }
+}
+
+function handleNativeDisconnect() {
+  const err = chrome.runtime.lastError;
+  overlayState.port = null;
+  overlayState.connected = false;
+  overlayState.lastError = err?.message || null;
+  onOverlayDisconnected();
+}
+
+function onOverlayDisconnected() {
+  overlayState.version = null;
+  overlayState.platform = null;
+  overlayState.capabilities = [];
+  overlayState.monitors = [];
+  // clickThrough は保持（次回接続まで前回値を保持）
+  updateOverlayUI();
+}
+
+/* ───── 字幕送信（デバウンス付） ───── */
+
+let _overlayDebounceTimer = null;
+let _overlayPendingText = '';
+
+function sendOverlayCaption(text, settingsObj) {
+  if (!isOverlayConnected()) return;
+  try {
+    overlayState.port.postMessage({
+      type: 'show_caption',
+      text: text || '',
+      settings: settingsObj || buildOverlaySettings(),
+    });
+  } catch (e) {
+    console.warn('overlay send failed', e);
+  }
+}
+
+function scheduleOverlayCaption(text) {
+  _overlayPendingText = text || '';
+  if (_overlayDebounceTimer) clearTimeout(_overlayDebounceTimer);
+  _overlayDebounceTimer = setTimeout(() => {
+    _overlayDebounceTimer = null;
+    sendOverlayCaption(_overlayPendingText, buildOverlaySettings());
+  }, OVERLAY_DEBOUNCE_MS);
+}
+
+function flushOverlayCaption() {
+  if (_overlayDebounceTimer) {
+    clearTimeout(_overlayDebounceTimer);
+    _overlayDebounceTimer = null;
+  }
+  sendOverlayCaption(_overlayPendingText, buildOverlaySettings());
+}
+
+/** スタイル設定だけを送る（applySettings から呼ばれる）*/
+function sendOverlayStyleUpdate() {
+  if (!isOverlayConnected()) return;
+  try {
+    overlayState.port.postMessage({ type: 'update_style', settings: buildOverlaySettings() });
+  } catch (e) {
+    console.warn('update_style failed', e);
+  }
+}
+
+/** クリックスルー切替（仕様 4.2 set_click_through）*/
+function setOverlayClickThrough(enabled) {
+  if (!isOverlayConnected()) return;
+  if (!hasOverlayCapability('click-through')) {
+    console.warn('overlay does not support click-through');
+    return;
+  }
+  try {
+    overlayState.port.postMessage({ type: 'set_click_through', enabled: !!enabled });
+  } catch (e) {
+    console.warn('click_through send failed', e);
+  }
+}
+
+/** モニタ移動（仕様 4.2 set_monitor）*/
+function setOverlayMonitor(index) {
+  if (!isOverlayConnected()) return;
+  if (!hasOverlayCapability('multi-monitor')) return;
+  try {
+    overlayState.port.postMessage({ type: 'set_monitor', index: Number(index) });
+  } catch (e) {
+    console.warn('set_monitor failed', e);
+  }
+}
+
+function sendOverlayTestCaption() {
+  if (!isOverlayConnected()) {
+    alert('ネイティブオーバーレイが見つかりません。\n設定パネルの「接続」ボタンを押してください。');
+    return;
+  }
+  scheduleOverlayCaption('テスト字幕です。\nネイティブオーバーレイ接続OK →\n継続行サンプル');
+  flushOverlayCaption();
+}
+
+/* ───── UI 反映 ───── */
+
+function updateOverlayUI() {
+  // ツールバーのオーバーレイボタン
+  if (els.btnOverlay) {
+    els.btnOverlay.classList.toggle('connected', isOverlayConnected());
+    els.btnOverlay.title = isOverlayConnected()
+      ? `デスクトップオーバーレイ 接続中 (v${overlayState.version || '?'}) — クリックで切断`
+      : 'デスクトップオーバーレイに接続（OSレベル透過字幕）';
+  }
+
+  // 設定パネルの「ネイティブオーバーレイ連携」セクション
+  const stat = document.getElementById('cap-overlay-status');
+  const ctBtn = document.getElementById('cap-overlay-clickthrough');
+  const monSel = document.getElementById('cap-overlay-monitor');
+  const testBtn = document.getElementById('cap-overlay-test');
+  const connBtn = document.getElementById('cap-overlay-connect');
+  const dlLink = document.getElementById('cap-overlay-install');
+
+  if (stat) {
+    if (isOverlayConnected()) {
+      const caps = overlayState.capabilities.join(', ') || '-';
+      stat.textContent = `接続中 v${overlayState.version} (${overlayState.platform})\ncapabilities: ${caps}`;
+      stat.className = 'cap-overlay-status connected';
+    } else {
+      stat.textContent = overlayState.lastError ? `未接続：${overlayState.lastError}` : '未接続';
+      stat.className = 'cap-overlay-status disconnected';
+    }
+  }
+  if (connBtn) {
+    connBtn.textContent = isOverlayConnected() ? '切断' : '接続';
+  }
+  if (testBtn) {
+    testBtn.disabled = !isOverlayConnected();
+  }
+  if (ctBtn) {
+    const supported = hasOverlayCapability('click-through');
+    ctBtn.disabled = !isOverlayConnected() || !supported;
+    ctBtn.checked = !!overlayState.clickThrough;
+  }
+  if (monSel) {
+    const supported = hasOverlayCapability('multi-monitor');
+    monSel.disabled = !isOverlayConnected() || !supported || overlayState.monitors.length === 0;
+    if (overlayState.monitors.length > 0) {
+      const desired = overlayState.monitors.map(m => `${m.index}:${m.name}`).join('|');
+      if (monSel.dataset.signature !== desired) {
+        monSel.innerHTML = '';
+        for (const m of overlayState.monitors) {
+          const opt = document.createElement('option');
+          opt.value = String(m.index);
+          opt.textContent = `${m.index}: ${m.name} ${m.width}x${m.height}${m.is_primary ? ' (主)' : ''}`;
+          monSel.appendChild(opt);
+        }
+        monSel.dataset.signature = desired;
+      }
+    } else {
+      monSel.innerHTML = '<option value="">（モニタ情報なし）</option>';
+      monSel.dataset.signature = '';
+    }
+  }
+  if (dlLink) {
+    dlLink.style.display = isOverlayConnected() ? 'none' : '';
+  }
+}
+
+function bindOverlayBridge() {
+  // ツールバーのトグル
+  if (els.btnOverlay) {
+    els.btnOverlay.addEventListener('click', () => {
+      if (isOverlayConnected()) disconnectOverlay();
+      else connectNativeOverlay();
+    });
+  }
+
+  // 設定パネル：接続/切断ボタン
+  const connBtn = document.getElementById('cap-overlay-connect');
+  if (connBtn) connBtn.addEventListener('click', () => {
+    if (isOverlayConnected()) disconnectOverlay();
+    else connectNativeOverlay();
+  });
+
+  // テスト字幕
+  const testBtn = document.getElementById('cap-overlay-test');
+  if (testBtn) testBtn.addEventListener('click', sendOverlayTestCaption);
+
+  // クリックスルー
+  const ctBtn = document.getElementById('cap-overlay-clickthrough');
+  if (ctBtn) ctBtn.addEventListener('change', (e) => {
+    setOverlayClickThrough(!!e.target.checked);
+  });
+
+  // モニタ選択
+  const monSel = document.getElementById('cap-overlay-monitor');
+  if (monSel) monSel.addEventListener('change', (e) => {
+    const idx = Number(e.target.value);
+    if (Number.isFinite(idx)) setOverlayMonitor(idx);
+  });
+
+  // インストーラ DL リンク（暫定：Phase 4 で正式整備）
+  const dlLink = document.getElementById('cap-overlay-install');
+  if (dlLink) dlLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    alert('インストーラはまだ準備中です（dictation-overlay Phase 4 で対応予定）。\n\n現状は dictation-overlay リポジトリの README に従って手動セットアップしてください。');
+  });
+
+  // ページを離れるときは disconnect
+  window.addEventListener('beforeunload', () => {
+    disconnectOverlay();
+  });
+
+  updateOverlayUI();
+}
+
 /* ───────── init ───────── */
 
 function init() {
@@ -746,6 +1117,7 @@ function init() {
   bindSettingsUI();
   bindBoxInteractions();
   bindSync();
+  bindOverlayBridge();
   renderLatest();
   document.title = '字幕（ライブキャプション）';
 }
