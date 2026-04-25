@@ -637,7 +637,14 @@ function appendRawChunk(text) {
   const container = getWriteContainer();
   const inBg = container !== els.confirmed;
   if (!inBg) hideEmptyHint();
-  if (!state.pendingChunkEl || !container.contains(state.pendingChunkEl)) {
+  // v0.13.16: Web Speech モードでは final（確定）が来るたびに新しい段落を作る。
+  // 旧来は同じ pendingChunkEl にスペースで連結し続けてベタ書き状態になり、
+  // 字幕（最新N段落）に長文がドカっと出る原因だった。
+  // Web Speech が「ここで一区切り」と自分で判断して final を出すタイミングは
+  // 自然な発話の切れ目なので、それを段落区切りとして尊重する。
+  // Gemini Audio の 6 秒チャンク = 1 段落、と対称的な構造になる。
+  const forceNewPara = state.settings.inputMode === 'web-speech';
+  if (forceNewPara || !state.pendingChunkEl || !container.contains(state.pendingChunkEl)) {
     state.pendingChunkEl = createParagraphEl(text, 'paragraph raw');
     container.appendChild(state.pendingChunkEl);
     state.pendingChunkText = text;
