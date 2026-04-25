@@ -135,10 +135,12 @@ const DEFAULT_SETTINGS = {
   webspeechInterimOpacity: 70,     // 0-100。100 で確定文字と区別なし、低いほど薄く
   // Web Speech モードの強制 commit（チャンク間隔）設定 (v0.13.14〜)
   // - 0 にすると WebSpeech 任せ（既存挙動）、N 秒にすると N 秒ごとに recognition.stop()
-  //   を呼んで「ここまで」と区切らせる。Gemini Audio の audioChunkSec と対称的な仕組み。
-  // - 岡田斗司夫みたいに長く話し続ける人で final が遅れて字幕がドカっと出るのを防ぐ。
-  // - 話し手のリズムに合わせて 3〜10 秒で調整。
-  webspeechCommitSec: 6,
+  //   を呼んで「ここまで」と区切らせる。
+  // - v0.13.15: Web Speech の自動 final 区切りがそもそも頻繁で、stop ベースだと
+  //   かえって短い文節が頻繁に出る副作用が判明。代わりに字幕表示側を「自動行スクロール」
+  //   モードにする方向に切替。本機能はコード保持のまま既定 0（OFF）に戻して UI も隠す。
+  //   後で再活用したくなったら captions.html / app.js で hidden を外せば復活する。
+  webspeechCommitSec: 0,
 };
 const WEB_SPEECH_DEFAULTS = {
   webspeechInterimDebounceMs: 300,

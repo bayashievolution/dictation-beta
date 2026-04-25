@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.13.14" />
+  <link rel="stylesheet" href="captions.css?v=0.13.15" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
@@ -122,18 +122,17 @@
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
       </div>
 
-      <!-- v0.13.14 整理：字幕表示モードセレクトを一旦メニューから隠す。
-           内部のストリーム機能（splitIntoStreamLines / streamIngestFromSession 等）
-           は captions.js に残してあるので、ここを `hidden` 外せば再表示できる。 -->
-      <div class="cap-field hidden">
+      <!-- v0.13.15 整理：字幕表示モードを 2 択にシンプル化 -->
+      <div class="cap-field">
         <label class="cap-label">字幕表示モード</label>
         <select id="cap-display-mode">
-          <option value="block" selected>ブロック（段落単位で最新N段落）</option>
-          <option value="stream">ストリーム（行ごとにスクロール積上げ）</option>
+          <option value="block" selected>ブロック（最新N段落をスパッと差替え）</option>
+          <option value="flow">自動行スクロール（1行ずつ下から積み上がる）</option>
+          <!-- 'stream' は v0.13.12 互換用（手動最大文字数モード）。UI からは外す。 -->
         </select>
         <small class="cap-hint">
           <strong>ブロック</strong>＝段落を丸ごと表示・差替え。
-          <strong>ストリーム</strong>＝句読点と文字数で行分割し、文字起こしペインのように下から積み上がる。長文喋りに追従しやすい。
+          <strong>自動行スクロール</strong>＝字幕窓の幅で自動改行しつつ、文字起こしペインのように下から積み上がる。長文喋りに追従しやすい。
         </small>
       </div>
 
@@ -158,28 +157,26 @@
           <option value="7">7行</option>
           <option value="8">8行（履歴多め）</option>
         </select>
+        <small class="cap-hint">字幕窓の幅とフォントサイズから 1 行に入る文字数を自動算出します。窓のリサイズ／フォントサイズ変更で自動的に再計算。</small>
 
-        <label class="cap-label" style="margin-top:8px">
-          1行の最大文字数 <output id="cap-stream-max-chars-out">28字</output>
-        </label>
-        <input type="range" id="cap-stream-max-chars" min="15" max="50" step="1" value="28" />
-        <small class="cap-hint">句読点が無い長文をこの文字数で強制改行。少ない＝細かく流れる、多い＝1行に詰める。</small>
-
-        <label class="cap-label" style="margin-top:8px">行追加の間隔</label>
-        <select id="cap-stream-interval">
-          <option value="150">速め 150ms（流れる映像感）</option>
-          <option value="300" selected>普通 300ms（既定）</option>
-          <option value="500">ゆっくり 500ms</option>
-          <option value="800">かなりゆっくり 800ms</option>
-        </select>
-
-        <label class="cap-label" style="margin-top:8px">パケットサイズ（一度に送る行数）</label>
-        <select id="cap-stream-packet">
-          <option value="1" selected>1行ずつ（スクロール感）</option>
-          <option value="2">2行まとめて（トランジション感）</option>
-        </select>
-
-        <div class="cap-row" style="margin-top:10px;justify-content:flex-end">
+        <!-- v0.13.15 整理：詳細設定は隠しつつ機能は維持（後で再表示可能） -->
+        <div class="hidden">
+          <label class="cap-label" style="margin-top:8px">
+            1行の最大文字数 <output id="cap-stream-max-chars-out">28字</output>
+          </label>
+          <input type="range" id="cap-stream-max-chars" min="15" max="50" step="1" value="28" />
+          <label class="cap-label" style="margin-top:8px">行追加の間隔</label>
+          <select id="cap-stream-interval">
+            <option value="150">速め 150ms（流れる映像感）</option>
+            <option value="300" selected>普通 300ms（既定）</option>
+            <option value="500">ゆっくり 500ms</option>
+            <option value="800">かなりゆっくり 800ms</option>
+          </select>
+          <label class="cap-label" style="margin-top:8px">パケットサイズ（一度に送る行数）</label>
+          <select id="cap-stream-packet">
+            <option value="1" selected>1行ずつ（スクロール感）</option>
+            <option value="2">2行まとめて（トランジション感）</option>
+          </select>
           <button id="cap-stream-defaults" class="cap-btn-ghost">ストリーム設定を既定に戻す</button>
         </div>
       </div>
@@ -260,7 +257,7 @@
     </div>
   </aside>
 
-  <script src="gemini.js?v=0.13.14"></script>
-  <script src="captions.js?v=0.13.14"></script>
+  <script src="gemini.js?v=0.13.15"></script>
+  <script src="captions.js?v=0.13.15"></script>
 </body>
 </html>

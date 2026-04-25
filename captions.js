@@ -295,9 +295,23 @@ function reflectSettingsToUI() {
 function applyDisplayModeVisibility() {
   const block = document.getElementById('cap-block-only-fields');
   const stream = document.getElementById('cap-stream-only-fields');
-  const isStream = (settings.displayMode === 'stream');
-  if (block) block.classList.toggle('hidden', isStream);
-  if (stream) stream.classList.toggle('hidden', !isStream);
+  const isFlow = (settings.displayMode === 'stream' || settings.displayMode === 'flow');
+  if (block) block.classList.toggle('hidden', isFlow);
+  if (stream) stream.classList.toggle('hidden', !isFlow);
+}
+
+/** v0.13.15: 字幕窓のリサイズ／フォントサイズ変更で、自動行スクロール時の
+ *  1行文字数が変わるので、表示を再計算する */
+let _streamResizeTimer = null;
+function scheduleStreamRelayout() {
+  if (settings.displayMode !== 'flow') return;
+  if (_streamResizeTimer) clearTimeout(_streamResizeTimer);
+  _streamResizeTimer = setTimeout(() => {
+    _streamResizeTimer = null;
+    // 全リセットして、現在の transcript から末尾を取り直す
+    streamReset();
+    renderLatest();
+  }, 250);
 }
 
 /* ───────── ストリームモード（行スクロール） v0.13.12 ─────────
@@ -322,6 +336,20 @@ function streamReset() {
     clearTimeout(_streamFlushTimer);
     _streamFlushTimer = null;
   }
+}
+
+/** v0.13.15: 字幕窓の幅とフォントサイズから「1行に入る文字数」を動的算出。
+ *  Window リサイズや fontSize 変更にも追従する。 */
+function calcAutoMaxChars() {
+  const el = els.text;
+  if (!el) return 28;
+  const w = el.clientWidth || el.offsetWidth || 1500;
+  const fontSize = Number(settings.fontSize) || 64;
+  // 全角ベースで概算。漢字＋ひらがな混在の実測平均で 0.95 を係数に。
+  // 余白として両端 12px ずつくらい引く（パディングは要素内側で吸収済みだが念のため）。
+  const usable = Math.max(80, w - 16);
+  const charsPerLine = Math.floor(usable / (fontSize * 0.95));
+  return Math.max(8, Math.min(80, charsPerLine));
 }
 
 /** 句読点優先で行分割。長すぎたら maxChars で強制改行。 */
@@ -397,12 +425,31 @@ function extractSessionPlainText(session) {
   return (tmp.textContent || '').trim();
 }
 
+/** v0.13.15: 1行最大文字数を取得。auto モードなら字幕窓幅から動的算出 */
+function getStreamMaxChars() {
+  // displayMode が 'flow' なら自動算出。'stream' は従来どおり手動値を尊重
+  if (settings.displayMode === 'flow') return calcAutoMaxChars();
+  return Math.max(15, Math.min(50, Number(settings.streamLineMaxChars) || 28));
+}
+
 /** transcript 全文 → 行リストのうち、まだ画面に出ていない新規行だけ pending に追加 */
 function streamIngestFromSession(session) {
-  // セッション切替時は履歴をリセット
+  // セッション切替 or 初回 → 履歴をリセットして「末尾だけ」表示
+  // （字幕表示開始時に過去ログがドカっと出る問題対策・v0.13.15）
   if (_streamLastSessionId !== session.id) {
     streamReset();
     _streamLastSessionId = session.id;
+    const fullText = extractSessionPlainText(session);
+    if (fullText) {
+      const maxChars = getStreamMaxChars();
+      const allLines = splitIntoStreamLines(fullText, maxChars);
+      const displayCount = Math.max(2, Math.min(8, Number(settings.streamLineCount) || 4));
+      // 末尾の displayCount 行だけを「既に表示済み」として開始する。
+      // それより古い行は流さない（ドカ感を防ぐ）。
+      _streamDisplayed = allLines.slice(-displayCount);
+      _streamLastSourceText = fullText;
+    }
+    return;
   }
   const fullText = extractSessionPlainText(session);
   if (!fullText) return;
@@ -418,7 +465,7 @@ function streamIngestFromSession(session) {
     delta = fullText;
   }
   _streamLastSourceText = fullText;
-  const maxChars = Math.max(15, Math.min(50, Number(settings.streamLineMaxChars) || 28));
+  const maxChars = getStreamMaxChars();
   const newLines = splitIntoStreamLines(delta, maxChars);
   if (newLines.length > 0) {
     _streamPending.push(...newLines);
@@ -839,9 +886,11 @@ function renderLatest() {
   }
   els.sessionTitle.textContent = session.title || '';
 
-  // ストリームモード（v0.13.12）：transcript の差分から行を抽出して
-  // pending キュー → 時系列でフラッシュ → 最新N行を下から積み上げ表示
-  if (settings.displayMode === 'stream') {
+  // ストリーム/自動行スクロールモード：
+  // 'stream' (v0.13.12) = 手動最大文字数で分割
+  // 'flow' (v0.13.15) = 字幕窓幅から動的に1行文字数を算出して分割
+  // どちらも下から積み上げの「文字起こしペイン的なスクロール感」
+  if (settings.displayMode === 'stream' || settings.displayMode === 'flow') {
     streamIngestFromSession(session);
     renderStreamView();
     if (settings.followLive) {
@@ -1542,6 +1591,15 @@ function init() {
   bindSync();
   bindOverlayBridge();
   renderLatest();
+  // v0.13.15: 字幕窓のリサイズで auto モードの 1行文字数が変わるので再計算
+  window.addEventListener('resize', scheduleStreamRelayout);
+  // 字幕ボックス自体のリサイズ（ユーザーがドラッグでサイズ変更）にも追従
+  if (typeof ResizeObserver !== 'undefined' && els.text) {
+    try {
+      const ro = new ResizeObserver(() => scheduleStreamRelayout());
+      ro.observe(els.text);
+    } catch (e) { /* 古いブラウザは無視 */ }
+  }
   document.title = '字幕（ライブキャプション）';
 }
 
