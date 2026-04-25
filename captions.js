@@ -624,9 +624,11 @@ function renderLatest() {
 
   // v0.13.9: Web Speech モード用 interim ライブ表示。母艦が書いた liveInterim
   // エントリを読んで、最新段落の末尾 or 別段落として薄く描画する。
-  const live = loadLiveInterim(session.id);
-  const interimText = live && live.text ? String(live.text).trim() : '';
-  const interimOpacity = live ? Math.max(0, Math.min(100, Number(live.opacity) || 70)) : 70;
+  // 注: 後続で `const live = Date.now() - updated < 15000;` があるので、
+  //     ここで `live` という名前を使うと再宣言エラーになる（v0.13.11 修正）。
+  const liveInterim = loadLiveInterim(session.id);
+  const interimText = liveInterim && liveInterim.text ? String(liveInterim.text).trim() : '';
+  const interimOpacity = liveInterim ? Math.max(0, Math.min(100, Number(liveInterim.opacity) || 70)) : 70;
 
   if (latest.length === 0 && !interimText) {
     renderTextIntoBox('');
