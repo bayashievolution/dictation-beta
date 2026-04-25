@@ -342,6 +342,88 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 ---
 
+### 2026-04-26 v0.13.31 字幕と文字起こしペインの完全分離（やっさん発「改行はバッファ内だけ」）
+
+**事故の構造**：v0.13.31 の改行文字数（30 字 slice）の実装で、私が `appendRawChunk`
+を呼んで slice テキストを **transcript HTML に直接追加** していた。結果、文字起こし
+ペインも 30 字単位で改行されて右側スカスカに。さらに final 時の `appendRawChunk(text)`
+で **slice 累積分も含めた full text** を書いていたので（`text.slice(offset)` の
+バグも疑いあり、要検証）、文字起こしペインに**重複する累積段落**が出る現象も発生。
+
+やっさんから：
+> しょっぱなからアムロがこれまでと同
+> じようにビームライフルを向けて狙って撃った瞬間、
+> しょっぱなからアムロがこれまでと同じようにビームライフル...瞬間にシャアが...んで
+> （25 字単位で改行＋ final で全文累積で出ている画面の写真）
+
+> だからやっぱ改行は　バッファ内だけにしてほしい
+> 字幕に表示される内容＝バッファだからいけるよね？
+
+**やっさんの真意（私が当初取り違えた）**：
+- 「30 字で改行」は **字幕ウィンドウだけ**で起きるべきこと
+- **文字起こしペインは触らない**（自然 final 単位＝v0.13.16 の元の挙動）
+- 字幕への伝達は **「バッファ」= 別経路**で行う
+
+**完全分離の実装**：
+
+| | 文字起こしペイン | 字幕ウィンドウ／オーバーレイ |
+|---|---|---|
+| 単位 | 自然 final（Web Speech が出す） | 30 字 slice 単位 |
+| データ | `dictation:sessions` の transcript HTML | **`dictation:liveCaption`**（新キー、JSON 配列） |
+| 関数 | `appendRawChunk` | **`appendCaptionSlice`**（新規） |
+| AI 整形 | あり（ショート/ミドル両方） | なし（生テキスト、即時性優先） |
+
+整形済み字幕が欲しい用途は **Gemini Audio モード**を使う、というやっさんの判断。
+
+**app.js の `rec.onresult`**（v0.13.31 完全分離型）：
+
+```js
+for (let i = event.resultIndex; i < event.results.length; i++) {
+  const result = event.results[i];
+  const text = result[0].transcript;
+  if (result.isFinal) {
+    // 文字起こしペイン：自然 final 全文を 1 段落として（v0.13.16 の元の挙動）
+    appendRawChunk(text);
+    // 字幕バッファ：offset 以降の残りだけ（既に slice で流した分は重複させない）
+    if (sliceN > 0) {
+      const offset = state.interimSliceOffset || 0;
+      const remaining = offset > 0 ? text.slice(offset) : text;
+      if (remaining) appendCaptionSlice(remaining);
+    }
+    state.interimSliceOffset = 0;
+  } else {
+    // 字幕バッファだけに 30 字単位で append（transcript には書かない）
+    if (sliceN > 0) {
+      let cursor = state.interimSliceOffset || 0;
+      while (text.length - cursor >= sliceN) {
+        appendCaptionSlice(text.slice(cursor, cursor + sliceN));
+        cursor += sliceN;
+      }
+      state.interimSliceOffset = cursor;
+    }
+  }
+}
+```
+
+**captions.js**：
+- `loadCaptionBuffer()` で `dictation:liveCaption` を読む
+- `renderLatest` の最初で字幕バッファが存在すれば優先的にそれを表示
+- 空（録音停止中・Gemini Audio モード等）なら従来の transcript ベースにフォールバック
+- storage イベントに `CAPTION_BUFFER_KEY` を追加して即時反映
+
+**録音停止時の処理**：`stopRecording` で `clearCaptionBuffer()` を呼んで、次の
+録音開始時に過去の slice が残らないようにする。
+
+**今後の警告**：
+- 「字幕」と「文字起こしペイン」は **データ経路が別**。slice / 改行 / バッファ 系の
+  操作はどちらのデータに書くか必ず明示する
+- v0.13.16 で確立した「文字起こしペインは自然 final 単位」原則は守る
+- v0.13.30 の自滅事故と今回の事故は同じ構造：「**やっさんが解決したい問題の文脈を切り捨てて、
+  実装の都合で対象を歪める**」。今回は「改行＝transcript と字幕の両方」と私が勝手に
+  解釈した。やっさんは最初から「字幕だけ」を想定していた
+
+---
+
 ### 2026-04-26 v0.13.31 final 毎ショート整形（喋り通しても整形される）
 
 **背景**：v0.13.31 までは AI 整形（ショート＝誤字脱字、ミドル＝文脈再整形）が

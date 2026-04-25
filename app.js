@@ -637,6 +637,37 @@ function stopWebSpeechSilenceStopTimer() {
 // v0.13.23 で UI 撤去 = 設定経路なし。app.js 側だけ残しても呼び出し元が無く意味なし。
 // 機能撤去のトリガは「読み手なし」のコード整合性チェック（CLAUDE.md ルール12 学び）。
 
+/* ───────── 字幕用バッファ (v0.13.31 完全分離型) ─────────
+ * やっさん発「文字起こしウィンドウに表示されるものと、字幕に表示されるものは別にしてほしい。
+ *   字幕に表示される内容＝バッファだからいけるよね？」の実装。
+ *
+ * - 文字起こしペイン (transcript HTML)：自然 final 単位で段落追加（appendRawChunk、v0.13.16 の元の挙動）
+ * - 字幕ウィンドウ／オーバーレイ：30 字 slice 単位で段落追加（appendCaptionSlice、新規）
+ * - AI 整形は文字起こしペイン側だけ。字幕は生テキスト（即時性優先）。
+ *   字幕を整形したい用途は Gemini Audio モードを使う。
+ *
+ * localStorage キー：dictation:liveCaption（最新 N 件、JSON 配列）。
+ * captions.js が監視して、存在すれば字幕表示に優先反映。
+ */
+const CAPTION_BUFFER_KEY = 'dictation:liveCaption';
+const CAPTION_BUFFER_MAX = 10; // 最新 10 段落保持（captions.js の paraCount=2 より十分大きい）
+
+function appendCaptionSlice(text) {
+  if (!text) return;
+  let buf = [];
+  try { buf = JSON.parse(localStorage.getItem(CAPTION_BUFFER_KEY) || '[]'); } catch {}
+  if (!Array.isArray(buf)) buf = [];
+  buf.push({ text: String(text), ts: Date.now() });
+  if (buf.length > CAPTION_BUFFER_MAX) buf = buf.slice(-CAPTION_BUFFER_MAX);
+  try { localStorage.setItem(CAPTION_BUFFER_KEY, JSON.stringify(buf)); } catch (e) {
+    console.warn('appendCaptionSlice persist failed', e);
+  }
+}
+
+function clearCaptionBuffer() {
+  try { localStorage.removeItem(CAPTION_BUFFER_KEY); } catch {}
+}
+
 function appendRawChunk(text) {
   if (!text || !text.trim()) return;
   const container = getWriteContainer();
@@ -1163,11 +1194,13 @@ function buildRecognition() {
   rec.onstart = () => setStatus('listening', '録音中');
 
   rec.onresult = (event) => {
-    // v0.13.31: 真の「改行」方式 = recognition.stop() を呼ばずに、interim を
-    // 自前で N 字単位にカットして transcript に新段落として流す。
-    // やっさんが解決したい問題：「stop()→再start のラグでブロック間の言葉が失われる」
-    // → stop() を呼ばないことが大前提（v0.13.30 自滅事故の本質）。
-    // sliceN = 0 のときは旧来の動作（final が来てから appendRawChunk）。
+    // v0.13.31 完全分離型：
+    // - 文字起こしペイン (transcript HTML)：**自然 final** が来たら appendRawChunk で
+    //   1 段落追加（v0.13.16 の元の挙動）。slice では transcript に書かない。
+    // - 字幕ウィンドウ／オーバーレイ：interim を **30 字 slice 単位** で字幕用バッファ
+    //   (dictation:liveCaption) に append。recognition.stop() は呼ばない＝言葉抜けゼロ。
+    // - state.interimSliceOffset は「現在の result 内で字幕バッファに既に流した文字数」
+    //   を覚えるためだけに使う（transcript への影響なし）。
     const sliceN = Number(state.settings.webspeechSliceChars || 0);
     let interim = '';
     let gotFinal = false;
@@ -1175,35 +1208,33 @@ function buildRecognition() {
       const result = event.results[i];
       const text = result[0].transcript;
       if (result.isFinal) {
-        // この result 内で interim slice として既に流した分（offset）を差し引く。
-        // 残り（offset 以降）だけを最後の段落として transcript に追加。
-        const offset = state.interimSliceOffset || 0;
-        const remaining = offset > 0 ? text.slice(offset) : text;
-        if (remaining) appendRawChunk(remaining);
+        // 文字起こしペインには **自然 final 全文** を 1 段落として追加（25 字単位の細切れではない）
+        appendRawChunk(text);
+        // 字幕バッファには「offset 以降の残り」だけを 1 段落として追加（既に流した分は重複させない）
+        if (sliceN > 0) {
+          const offset = state.interimSliceOffset || 0;
+          const remaining = offset > 0 ? text.slice(offset) : text;
+          if (remaining) appendCaptionSlice(remaining);
+        }
         state.interimSliceOffset = 0; // 次の result の頭から数え直す
         gotFinal = true;
       } else {
         interim += text;
-        // interim slice：N 字超えごとに新段落として appendRawChunk。
-        // stop() は呼ばない＝Web Speech は走り続ける＝言葉抜けゼロ。
+        // 字幕バッファに 30 字 slice 単位で append（transcript には書かない）
         if (sliceN > 0) {
           let cursor = state.interimSliceOffset || 0;
           while (text.length - cursor >= sliceN) {
             const chunk = text.slice(cursor, cursor + sliceN);
-            appendRawChunk(chunk);
+            appendCaptionSlice(chunk);
             cursor += sliceN;
-            diagLog.info(`Web Speech 改行 (${sliceN}字 interim slice)`);
+            diagLog.info(`字幕バッファ slice (${sliceN}字)`);
           }
           state.interimSliceOffset = cursor;
         }
       }
     }
-    // 文字起こしペインの interim 表示は、既に段落として流した分（offset）を
-    // 差し引いた残りだけ表示する（重複表示を防ぐ）。
-    const offsetForDisplay = state.interimSliceOffset || 0;
-    const interimForDisplay = offsetForDisplay > 0 && interim.length >= offsetForDisplay
-      ? interim.slice(offsetForDisplay)
-      : interim;
+    // 文字起こしペインの interim 表示は累積 interim をそのまま（slice を transcript に書いていないので重複なし）
+    const interimForDisplay = interim;
     // BG録音中（録音対象セッションが非表示）は共有の#interimに書かない。
     // 書くと別セッション（表示中のタブ）の文字起こしエリアに漏れて見える。
     if (isBgRecording()) {
@@ -1391,6 +1422,8 @@ function stopRecording() {
     // v0.13.31: 無音 stop タイマーも停止
     stopWebSpeechSilenceStopTimer();
     state.lastInterimText = '';
+    // v0.13.31: 字幕バッファをクリア（次の録音開始時に過去の slice が混ざらないように）
+    clearCaptionBuffer();
     if (state.recognition) {
       try { state.recognition.stop(); } catch {}
     }

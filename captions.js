@@ -17,6 +17,9 @@ const ACTIVE_TAB_KEY = 'dictation:activeTab';
 const SETTINGS_KEY = 'dictation:captionsSettings';
 const BOX_KEY = 'dictation:captionsBox';
 // v0.13.17: LIVE_INTERIM_KEY（v0.13.9 で追加）は cap-para-interim 撤去に伴い不要化。削除済み。
+// v0.13.31: 字幕用バッファキー（app.js が 30 字 slice 単位で書く）。
+// 存在すれば transcript ではなくこちらを字幕表示に使う（完全分離）。
+const CAPTION_BUFFER_KEY = 'dictation:liveCaption';
 
 const DEFAULT_SETTINGS = {
   fontSize: 64,
@@ -867,6 +870,16 @@ function loadActiveSession() {
 /** 前回レンダリングしたテキストを保持してトランジション判定に使う */
 let _lastRenderedText = '';
 
+/** v0.13.31: 字幕バッファ（app.js が 30 字 slice 単位で書く配列）を読む */
+function loadCaptionBuffer() {
+  try {
+    const raw = localStorage.getItem(CAPTION_BUFFER_KEY);
+    if (!raw) return null;
+    const buf = JSON.parse(raw);
+    return Array.isArray(buf) && buf.length > 0 ? buf : null;
+  } catch (_) { return null; }
+}
+
 function renderLatest() {
   const session = loadActiveSession();
   if (!session) {
@@ -896,7 +909,28 @@ function renderLatest() {
     return;
   }
 
-  // 以下、既存のブロックモード（最新N段落表示）
+  // v0.13.31: 字幕バッファ優先（完全分離）。
+  // app.js が 30 字 slice 単位で書く dictation:liveCaption を読み、存在すれば
+  // それを字幕に反映。文字起こしペインの transcript（自然 final 単位）は触らない。
+  // やっさん発「字幕に表示される内容＝バッファだから」の実装。
+  const liveBuf = loadCaptionBuffer();
+  if (liveBuf && liveBuf.length > 0) {
+    const n = Math.max(1, Math.min(5, settings.paraCount || 2));
+    const latest = liveBuf.slice(-n);
+    const html = latest.map((slice, idx) => {
+      const isLast = idx === latest.length - 1;
+      const cls = 'cap-para' + (isLast ? ' latest' : '');
+      return `<p class="${cls}">${escapeHtml(String(slice.text || ''))}</p>`;
+    }).join('');
+    renderTextIntoBox(html);
+    const updated = Number(liveBuf[liveBuf.length - 1].ts) || 0;
+    const live = Date.now() - updated < 15000;
+    setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
+    return;
+  }
+
+  // 以下、既存のブロックモード（最新N段落表示、transcript ベース）。
+  // 字幕バッファが空（録音停止中・Gemini Audio モード等）の時のフォールバック。
   // transcript は HTML 文字列。DOM として parse して .paragraph を拾う
   const tmp = document.createElement('div');
   tmp.innerHTML = session.transcript || '';
@@ -1070,7 +1104,8 @@ function setStatus(mode, label) {
 function bindSync() {
   // 同一オリジンの別ページ（サイドパネル index.html）での localStorage.setItem が storage イベントとしてここに届く
   window.addEventListener('storage', (e) => {
-    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY) {
+    // v0.13.31: 字幕バッファ（CAPTION_BUFFER_KEY）の更新も即時反映
+    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY || e.key === CAPTION_BUFFER_KEY) {
       renderLatest();
     }
   });
