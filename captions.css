@@ -589,6 +589,16 @@ body.broadcast-mode #cap-box-text {
   font-style: normal;
 }
 
+/* ストリームモード（v0.13.12）— 1行単位でスクロール積上げ表示
+ * 既存の cap-para から余分な margin を削って、行間隔は line-height に任せる。
+ * latest のみ強調・古い行は薄くフェードする「文字起こしペインのスクロール感」を再現。 */
+.cap-stream-line {
+  margin: 0 0 0.18em !important;
+}
+.cap-stream-line:not(.latest):not(.cap-para-interim) {
+  opacity: 0.85;
+}
+
 /* オーバーレイ接続フィードバック用トースト（右上に出して消える） */
 .cap-overlay-toast {
   position: fixed;

@@ -43,6 +43,21 @@ const DEFAULT_SETTINGS = {
   // OSD関連
   osdAi: false,           // AIで文節区切り整形するか
   transition: 'fade',     // 'none' | 'fade' | 'slide-right' | 'slide-left' | 'scroll'
+
+  // 字幕表示モード (v0.13.12〜)
+  // 'block' = 段落単位で最新N段落（既定・既存挙動）
+  // 'stream' = 行単位で下から積み上げてスクロール感を出す
+  displayMode: 'block',
+  streamLineCount: 4,           // ストリーム時の表示行数（2〜8）
+  streamLineMaxChars: 28,       // 句読点なしで強制改行する文字数（15〜50）
+  streamLineIntervalMs: 300,    // 行追加の間隔（150〜800）
+  streamPacketSize: 1,          // 1行ずつ or 2行まとめて
+};
+const STREAM_DEFAULTS = {
+  streamLineCount: 4,
+  streamLineMaxChars: 28,
+  streamLineIntervalMs: 300,
+  streamPacketSize: 1,
 };
 
 const DEFAULT_BOX = {
@@ -121,6 +136,14 @@ const els = {
   inOsdAi: document.getElementById('cap-osd-ai'),
   inTransition: document.getElementById('cap-transition'),
   btnReset: document.getElementById('cap-btn-reset'),
+  // ストリームモード関連 (v0.13.12)
+  inDisplayMode: document.getElementById('cap-display-mode'),
+  inStreamLineCount: document.getElementById('cap-stream-line-count'),
+  inStreamMaxChars: document.getElementById('cap-stream-max-chars'),
+  outStreamMaxChars: document.getElementById('cap-stream-max-chars-out'),
+  inStreamInterval: document.getElementById('cap-stream-interval'),
+  inStreamPacket: document.getElementById('cap-stream-packet'),
+  btnStreamDefaults: document.getElementById('cap-stream-defaults'),
 };
 
 /* ───────── ユーティリティ ───────── */
@@ -259,6 +282,168 @@ function reflectSettingsToUI() {
   if (els.inKeyColor) els.inKeyColor.value = settings.keyColor;
   if (els.inOsdAi) els.inOsdAi.checked = !!settings.osdAi;
   if (els.inTransition) els.inTransition.value = settings.transition || 'fade';
+  // ストリーム関連 (v0.13.12)
+  if (els.inDisplayMode) els.inDisplayMode.value = settings.displayMode || 'block';
+  if (els.inStreamLineCount) els.inStreamLineCount.value = String(settings.streamLineCount ?? 4);
+  if (els.inStreamMaxChars) els.inStreamMaxChars.value = String(settings.streamLineMaxChars ?? 28);
+  if (els.outStreamMaxChars) els.outStreamMaxChars.textContent = String(settings.streamLineMaxChars ?? 28) + '字';
+  if (els.inStreamInterval) els.inStreamInterval.value = String(settings.streamLineIntervalMs ?? 300);
+  if (els.inStreamPacket) els.inStreamPacket.value = String(settings.streamPacketSize ?? 1);
+  applyDisplayModeVisibility();
+}
+
+function applyDisplayModeVisibility() {
+  const block = document.getElementById('cap-block-only-fields');
+  const stream = document.getElementById('cap-stream-only-fields');
+  const isStream = (settings.displayMode === 'stream');
+  if (block) block.classList.toggle('hidden', isStream);
+  if (stream) stream.classList.toggle('hidden', !isStream);
+}
+
+/* ───────── ストリームモード（行スクロール） v0.13.12 ─────────
+ * 文字起こしウィンドウのスクロール感を字幕で再現する。
+ * - 句読点優先で行分割、長すぎたら streamLineMaxChars で強制改行
+ * - pending キューに溜めて streamLineIntervalMs ごとに 1〜2行ずつフラッシュ
+ * - 表示は最新 streamLineCount 行のみ。古い行は画面上方に押し出される
+ * - interim はキューとは別に最下行のライブ表示として薄く描画
+ */
+let _streamDisplayed = []; // 画面表示中の行
+let _streamPending = [];   // フラッシュ待ちの行
+let _streamFlushTimer = null;
+let _streamLastSourceText = ''; // 直前に処理した transcript 全テキスト（差分検出用）
+let _streamLastSessionId = null;
+
+function streamReset() {
+  _streamDisplayed = [];
+  _streamPending = [];
+  _streamLastSourceText = '';
+  _streamLastSessionId = null;
+  if (_streamFlushTimer) {
+    clearTimeout(_streamFlushTimer);
+    _streamFlushTimer = null;
+  }
+}
+
+/** 句読点優先で行分割。長すぎたら maxChars で強制改行。 */
+function splitIntoStreamLines(text, maxChars) {
+  if (!text) return [];
+  const out = [];
+  // 句読点を含めて区切る（句読点を行末に残す）
+  // 日本語：。．、，？！  英語：.,!?
+  const SENT_RE = /([^。．、，？！\?\!\.\,]*[。．、，？！\?\!\.\,])/g;
+  const sentences = [];
+  let lastIdx = 0;
+  for (const m of text.matchAll(SENT_RE)) {
+    sentences.push(m[1]);
+    lastIdx = m.index + m[1].length;
+  }
+  if (lastIdx < text.length) {
+    sentences.push(text.slice(lastIdx));
+  }
+  for (const s of sentences) {
+    const t = s.replace(/[\r\n]+/g, ' ').trim();
+    if (!t) continue;
+    if (t.length <= maxChars) {
+      out.push(t);
+    } else {
+      for (let i = 0; i < t.length; i += maxChars) {
+        out.push(t.slice(i, i + maxChars));
+      }
+    }
+  }
+  return out;
+}
+
+function streamScheduleFlush() {
+  if (_streamFlushTimer) return;
+  if (_streamPending.length === 0) return;
+  const interval = Math.max(150, Math.min(800, Number(settings.streamLineIntervalMs) || 300));
+  _streamFlushTimer = setTimeout(() => {
+    _streamFlushTimer = null;
+    streamFlushOnce();
+  }, interval);
+}
+
+function streamFlushOnce() {
+  if (_streamPending.length === 0) return;
+  const packet = Math.max(1, Math.min(2, Number(settings.streamPacketSize) || 1));
+  const take = Math.min(packet, _streamPending.length);
+  for (let i = 0; i < take; i++) {
+    _streamDisplayed.push(_streamPending.shift());
+  }
+  const max = Math.max(2, Math.min(8, Number(settings.streamLineCount) || 4));
+  while (_streamDisplayed.length > max) _streamDisplayed.shift();
+  // 描画は renderLatest 経由（pending 中も interim を反映できるように）
+  renderStreamView();
+  if (_streamPending.length > 0) streamScheduleFlush();
+}
+
+/** session の transcript 全テキストを取り出す */
+function extractSessionPlainText(session) {
+  if (!session) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = session.transcript || '';
+  // .paragraph ベースで取りつつ、なければ素のテキスト
+  const paras = tmp.querySelectorAll('.paragraph');
+  if (paras.length) {
+    return Array.from(paras).map(p => {
+      const h2 = p.querySelector('h2');
+      const body = p.querySelector('.p-body');
+      if (body) return (body.textContent || '').trim();
+      if (h2) return (p.textContent || '').replace(h2.textContent, '').trim();
+      return (p.textContent || '').trim();
+    }).filter(Boolean).join('\n\n');
+  }
+  return (tmp.textContent || '').trim();
+}
+
+/** transcript 全文 → 行リストのうち、まだ画面に出ていない新規行だけ pending に追加 */
+function streamIngestFromSession(session) {
+  // セッション切替時は履歴をリセット
+  if (_streamLastSessionId !== session.id) {
+    streamReset();
+    _streamLastSessionId = session.id;
+  }
+  const fullText = extractSessionPlainText(session);
+  if (!fullText) return;
+  if (fullText === _streamLastSourceText) return;
+  // 直前に処理した本文の続きから行分割
+  let delta = '';
+  if (fullText.startsWith(_streamLastSourceText)) {
+    delta = fullText.slice(_streamLastSourceText.length);
+  } else {
+    // transcript が組み変わったら（編集されたら）一旦リセット
+    _streamDisplayed = [];
+    _streamPending = [];
+    delta = fullText;
+  }
+  _streamLastSourceText = fullText;
+  const maxChars = Math.max(15, Math.min(50, Number(settings.streamLineMaxChars) || 28));
+  const newLines = splitIntoStreamLines(delta, maxChars);
+  if (newLines.length > 0) {
+    _streamPending.push(...newLines);
+    streamScheduleFlush();
+  }
+}
+
+function renderStreamView() {
+  // displayed + interim を組み合わせて描画
+  const lines = _streamDisplayed.slice();
+  // interim を末尾に薄く（liveInterim 仕組みを流用）
+  let interimHtml = '';
+  if (_streamLastSessionId) {
+    const liveInterim = loadLiveInterim(_streamLastSessionId);
+    if (liveInterim && liveInterim.text) {
+      const op = Math.max(0, Math.min(100, Number(liveInterim.opacity) || 70));
+      interimHtml = `<p class="cap-para latest cap-para-interim" style="opacity:${op / 100}">${escapeHtml(String(liveInterim.text).trim())}</p>`;
+    }
+  }
+  const html = lines.map((line, idx) => {
+    const isLast = idx === lines.length - 1 && !interimHtml;
+    const cls = 'cap-para cap-stream-line' + (isLast ? ' latest' : '');
+    return `<p class="${cls}">${escapeHtml(line)}</p>`;
+  }).join('') + interimHtml;
+  renderTextIntoBox(html);
 }
 
 function commit() {
@@ -367,6 +552,54 @@ function bindSettingsUI() {
       settings.transition = els.inTransition.value;
       commit();
       applyTransitionMode();
+    });
+  }
+
+  // 字幕表示モード（block / stream）
+  if (els.inDisplayMode) {
+    els.inDisplayMode.addEventListener('change', () => {
+      settings.displayMode = els.inDisplayMode.value;
+      commit();
+      applyDisplayModeVisibility();
+      streamReset();        // モード切替時にストリーム状態を初期化
+      renderLatest();
+    });
+  }
+  if (els.inStreamLineCount) {
+    els.inStreamLineCount.addEventListener('change', () => {
+      settings.streamLineCount = Math.max(2, Math.min(8, Number(els.inStreamLineCount.value) || 4));
+      commit();
+      renderLatest();
+    });
+  }
+  if (els.inStreamMaxChars) {
+    els.inStreamMaxChars.addEventListener('input', () => {
+      settings.streamLineMaxChars = Math.max(15, Math.min(50, Number(els.inStreamMaxChars.value) || 28));
+      if (els.outStreamMaxChars) els.outStreamMaxChars.textContent = settings.streamLineMaxChars + '字';
+      commit();
+      streamReset();
+      renderLatest();
+    });
+  }
+  if (els.inStreamInterval) {
+    els.inStreamInterval.addEventListener('change', () => {
+      settings.streamLineIntervalMs = Math.max(150, Math.min(800, Number(els.inStreamInterval.value) || 300));
+      commit();
+    });
+  }
+  if (els.inStreamPacket) {
+    els.inStreamPacket.addEventListener('change', () => {
+      settings.streamPacketSize = Math.max(1, Math.min(2, Number(els.inStreamPacket.value) || 1));
+      commit();
+    });
+  }
+  if (els.btnStreamDefaults) {
+    els.btnStreamDefaults.addEventListener('click', () => {
+      Object.assign(settings, STREAM_DEFAULTS);
+      reflectSettingsToUI();
+      commit();
+      streamReset();
+      renderLatest();
     });
   }
 
@@ -606,6 +839,24 @@ function renderLatest() {
   }
   els.sessionTitle.textContent = session.title || '';
 
+  // ストリームモード（v0.13.12）：transcript の差分から行を抽出して
+  // pending キュー → 時系列でフラッシュ → 最新N行を下から積み上げ表示
+  if (settings.displayMode === 'stream') {
+    streamIngestFromSession(session);
+    renderStreamView();
+    if (settings.followLive) {
+      requestAnimationFrame(() => {
+        const sc = els.boxScroll;
+        if (sc) sc.scrollTop = sc.scrollHeight;
+      });
+    }
+    const updated = Number(session.updatedAt) || 0;
+    const live = Date.now() - updated < 15000;
+    setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
+    return;
+  }
+
+  // 以下、既存のブロックモード（最新N段落表示）
   // transcript は HTML 文字列。DOM として parse して .paragraph を拾う
   const tmp = document.createElement('div');
   tmp.innerHTML = session.transcript || '';

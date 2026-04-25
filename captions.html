@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.13.11" />
+  <link rel="stylesheet" href="captions.css?v=0.13.12" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
@@ -123,6 +123,18 @@
       </div>
 
       <div class="cap-field">
+        <label class="cap-label">字幕表示モード</label>
+        <select id="cap-display-mode">
+          <option value="block" selected>ブロック（段落単位で最新N段落）</option>
+          <option value="stream">ストリーム（行ごとにスクロール積上げ）</option>
+        </select>
+        <small class="cap-hint">
+          <strong>ブロック</strong>＝段落を丸ごと表示・差替え。
+          <strong>ストリーム</strong>＝句読点と文字数で行分割し、文字起こしペインのように下から積み上がる。長文喋りに追従しやすい。
+        </small>
+      </div>
+
+      <div class="cap-field" id="cap-block-only-fields">
         <label class="cap-label">表示する段落数</label>
         <select id="cap-para-count">
           <option value="1">最新1段落のみ（最大に大きく）</option>
@@ -130,6 +142,43 @@
           <option value="3">最新3段落</option>
           <option value="5">最新5段落（履歴多め）</option>
         </select>
+      </div>
+
+      <div class="cap-field hidden" id="cap-stream-only-fields">
+        <label class="cap-label">表示する行数</label>
+        <select id="cap-stream-line-count">
+          <option value="2">2行</option>
+          <option value="3">3行</option>
+          <option value="4" selected>4行（既定）</option>
+          <option value="5">5行</option>
+          <option value="6">6行</option>
+          <option value="7">7行</option>
+          <option value="8">8行（履歴多め）</option>
+        </select>
+
+        <label class="cap-label" style="margin-top:8px">
+          1行の最大文字数 <output id="cap-stream-max-chars-out">28字</output>
+        </label>
+        <input type="range" id="cap-stream-max-chars" min="15" max="50" step="1" value="28" />
+        <small class="cap-hint">句読点が無い長文をこの文字数で強制改行。少ない＝細かく流れる、多い＝1行に詰める。</small>
+
+        <label class="cap-label" style="margin-top:8px">行追加の間隔</label>
+        <select id="cap-stream-interval">
+          <option value="150">速め 150ms（流れる映像感）</option>
+          <option value="300" selected>普通 300ms（既定）</option>
+          <option value="500">ゆっくり 500ms</option>
+          <option value="800">かなりゆっくり 800ms</option>
+        </select>
+
+        <label class="cap-label" style="margin-top:8px">パケットサイズ（一度に送る行数）</label>
+        <select id="cap-stream-packet">
+          <option value="1" selected>1行ずつ（スクロール感）</option>
+          <option value="2">2行まとめて（トランジション感）</option>
+        </select>
+
+        <div class="cap-row" style="margin-top:10px;justify-content:flex-end">
+          <button id="cap-stream-defaults" class="cap-btn-ghost">ストリーム設定を既定に戻す</button>
+        </div>
       </div>
 
       <div class="cap-field cap-field-row">
@@ -208,7 +257,7 @@
     </div>
   </aside>
 
-  <script src="gemini.js?v=0.13.11"></script>
-  <script src="captions.js?v=0.13.11"></script>
+  <script src="gemini.js?v=0.13.12"></script>
+  <script src="captions.js?v=0.13.12"></script>
 </body>
 </html>
