@@ -16,8 +16,7 @@ const SESSIONS_KEY = 'dictation:sessions';
 const ACTIVE_TAB_KEY = 'dictation:activeTab';
 const SETTINGS_KEY = 'dictation:captionsSettings';
 const BOX_KEY = 'dictation:captionsBox';
-// Web Speech モード時に母艦が書き込む interim ライブ表示用（v0.13.9〜）
-const LIVE_INTERIM_KEY = 'dictation:liveInterim';
+// v0.13.17: LIVE_INTERIM_KEY（v0.13.9 で追加）は cap-para-interim 撤去に伴い不要化。削除済み。
 
 const DEFAULT_SETTINGS = {
   fontSize: 64,
@@ -474,22 +473,14 @@ function streamIngestFromSession(session) {
 }
 
 function renderStreamView() {
-  // displayed + interim を組み合わせて描画
+  // v0.13.17: cap-para-interim 撤去（v0.13.9 undo）に伴い、ストリームモードでも
+  // interim 末尾追加は行わない。displayed 行のみ描画。
   const lines = _streamDisplayed.slice();
-  // interim を末尾に薄く（liveInterim 仕組みを流用）
-  let interimHtml = '';
-  if (_streamLastSessionId) {
-    const liveInterim = loadLiveInterim(_streamLastSessionId);
-    if (liveInterim && liveInterim.text) {
-      const op = Math.max(0, Math.min(100, Number(liveInterim.opacity) || 70));
-      interimHtml = `<p class="cap-para latest cap-para-interim" style="opacity:${op / 100}">${escapeHtml(String(liveInterim.text).trim())}</p>`;
-    }
-  }
   const html = lines.map((line, idx) => {
-    const isLast = idx === lines.length - 1 && !interimHtml;
+    const isLast = idx === lines.length - 1;
     const cls = 'cap-para cap-stream-line' + (isLast ? ' latest' : '');
     return `<p class="${cls}">${escapeHtml(line)}</p>`;
-  }).join('') + interimHtml;
+  }).join('');
   renderTextIntoBox(html);
 }
 
@@ -922,35 +913,25 @@ function renderLatest() {
   const n = Math.max(1, Math.min(5, settings.paraCount || 2));
   const latest = paras.slice(-n);
 
-  // v0.13.9: Web Speech モード用 interim ライブ表示。母艦が書いた liveInterim
-  // エントリを読んで、最新段落の末尾 or 別段落として薄く描画する。
-  // 注: 後続で `const live = Date.now() - updated < 15000;` があるので、
-  //     ここで `live` という名前を使うと再宣言エラーになる（v0.13.11 修正）。
-  const liveInterim = loadLiveInterim(session.id);
-  const interimText = liveInterim && liveInterim.text ? String(liveInterim.text).trim() : '';
-  const interimOpacity = liveInterim ? Math.max(0, Math.min(100, Number(liveInterim.opacity) || 70)) : 70;
+  // v0.13.17: v0.13.9 で追加した cap-para-interim による interim ライブ表示は撤去。
+  // 「字幕末尾に interim を流すと頻繁更新でパチパチ書き換わって読みづらい」
+  // というやっさん指摘の根本原因。CLAUDE.md ルール8の正しい undo として削除。
+  // 文字起こしペインの #interim（v0.4 以前から、yhpain）はそのまま残る。
 
-  if (latest.length === 0 && !interimText) {
+  if (latest.length === 0) {
     renderTextIntoBox('');
   } else if (settings.osdAi) {
     // AI OSD整形: 生テキスト抽出→Gemini→整形後を描画（デバウンス）
-    // interim は OSD AI 整形ループに混ぜると整形対象が安定しないため、
-    // ここでは interim を末尾に「（途中…）」として加えるのみとする。
     const rawText = latest.map(p => cleanRawParagraphText(p)).filter(Boolean).join('\n\n');
     scheduleOsdAiRender(rawText);
     const immediate = (_osdAiCache.output && _osdAiCache.inputHash === hashStr(rawText))
       ? _osdAiCache.output
       : rawText;
-    let html = textToOsdHtml(immediate);
-    if (interimText) {
-      html += `<p class="cap-para cap-para-interim" style="opacity:${interimOpacity / 100}">${escapeHtml(interimText)}</p>`;
-    }
-    renderTextIntoBox(html);
+    renderTextIntoBox(textToOsdHtml(immediate));
   } else {
     // 通常モード: 段落構造を保って表示
-    // 最新確定段落を出した後に、interim があれば最末尾に「途中表示」段落を追加
     const html = latest.map((p, idx) => {
-      const isLast = idx === latest.length - 1 && !interimText;
+      const isLast = idx === latest.length - 1;
       const cls = 'cap-para' + (isLast ? ' latest' : '');
       const h2 = p.querySelector && p.querySelector('h2');
       if (h2) {
@@ -962,12 +943,7 @@ function renderLatest() {
       const text = escapeHtml((p.textContent || '').trim());
       return `<p class="${cls}">${text}</p>`;
     }).join('');
-    let finalHtml = html;
-    if (interimText) {
-      // interim はライブの最新発話なので latest クラスも付ける（強調されるように）
-      finalHtml += `<p class="cap-para latest cap-para-interim" style="opacity:${interimOpacity / 100}">${escapeHtml(interimText)}</p>`;
-    }
-    renderTextIntoBox(finalHtml);
+    renderTextIntoBox(html);
   }
 
   if (settings.followLive) {
@@ -1094,7 +1070,7 @@ function setStatus(mode, label) {
 function bindSync() {
   // 同一オリジンの別ページ（サイドパネル index.html）での localStorage.setItem が storage イベントとしてここに届く
   window.addEventListener('storage', (e) => {
-    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY || e.key === LIVE_INTERIM_KEY) {
+    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY) {
       renderLatest();
     }
   });
@@ -1103,19 +1079,8 @@ function bindSync() {
   setInterval(renderLatest, 1000);
 }
 
-/** Web Speech 母艦から書かれた liveInterim を読む（v0.13.9）
- *  対象セッションでない or 古すぎ（5秒以上）なら無視。 */
-function loadLiveInterim(activeSessionId) {
-  try {
-    const raw = localStorage.getItem(LIVE_INTERIM_KEY);
-    if (!raw) return null;
-    const obj = JSON.parse(raw);
-    if (!obj || !obj.text) return null;
-    if (obj.sessionId !== activeSessionId) return null;
-    if (Date.now() - (obj.updatedAt || 0) > 5000) return null;
-    return obj;
-  } catch { return null; }
-}
+// v0.13.17: loadLiveInterim 関数を削除（v0.13.9 cap-para-interim の undo に伴う）。
+// LIVE_INTERIM_KEY も使われなくなったので冒頭の定数も削除する。
 
 /* ───────── ネイティブオーバーレイ連携 (dictation-overlay v0.2.0) ─────────
  * Chrome Native Messaging で別プロセス（ネイティブ字幕ウィンドウ）に
