@@ -128,10 +128,23 @@ const DEFAULT_SETTINGS = {
   audioDeviceId: '',
   audioChunkSec: 12,
   audioMinChunkBytes: 400, // 旧1200から感度↑。小さい発話（小声・短語）もGeminiへ送る
-  // v0.13.20: 旧 webspeechInterimDebounceMs / webspeechInterimOpacity (v0.13.9) と
-  // webspeechCommitSec (v0.13.14)、WEB_SPEECH_DEFAULTS は撤去。
-  // v0.13.16〜v0.13.19 の組み合わせ（final 毎新段落 + cap-para-interim 撤去 +
-  // appendRawChunk 内 snapshot/persist）で望む字幕動作を達成済み。
+  // Web Speech モード時の interim（途中表示）字幕反映設定 (v0.13.9〜)
+  // - WebSpeech は final が確定するまで字幕に出さない仕様で、長文喋り（YouTube等）で
+  //   ドカっと長文が出てついていけない問題があるため、interim を字幕にライブ流す。
+  webspeechInterimDebounceMs: 300, // 0=即時, 100/300/800 推奨。0 にすれば最も速い
+  webspeechInterimOpacity: 70,     // 0-100。100 で確定文字と区別なし、低いほど薄く
+  // Web Speech モードの強制 commit（チャンク間隔）設定 (v0.13.14〜)
+  // - 0 にすると WebSpeech 任せ（既存挙動）、N 秒にすると N 秒ごとに recognition.stop()
+  //   を呼んで「ここまで」と区切らせる。
+  // - v0.13.15: Web Speech の自動 final 区切りがそもそも頻繁で、stop ベースだと
+  //   かえって短い文節が頻繁に出る副作用が判明。代わりに字幕表示側を「自動行スクロール」
+  //   モードにする方向に切替。本機能はコード保持のまま既定 0（OFF）に戻して UI も隠す。
+  //   後で再活用したくなったら captions.html / app.js で hidden を外せば復活する。
+  webspeechCommitSec: 0,
+};
+const WEB_SPEECH_DEFAULTS = {
+  webspeechInterimDebounceMs: 300,
+  webspeechInterimOpacity: 70,
 };
 
 const PANE_FONT_KEYS = {
@@ -342,8 +355,10 @@ const els = {
   inputAudioDevice: document.getElementById('input-audio-device'),
   inputChunkSec: document.getElementById('input-chunk-sec'),
   inputMinChunkBytes: document.getElementById('input-min-chunk-bytes'),
-  // v0.13.20: 旧 v0.13.9〜v0.13.14 の Web Speech 設定 UI への els 参照は撤去。
-  // 機能達成済み（v0.13.16〜v0.13.19）で不要、混乱の元なので消す。
+  inputWsInterimDebounce: document.getElementById('input-webspeech-interim-debounce'),
+  inputWsInterimOpacity: document.getElementById('input-webspeech-interim-opacity'),
+  inputWsCommitSec: document.getElementById('input-webspeech-commit-sec'),
+  btnWebSpeechDefaults: document.getElementById('btn-webspeech-defaults'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
   zoomPercent: document.getElementById('zoom-percent'),
@@ -525,10 +540,97 @@ function setParagraphContent(pEl, refinedText) {
   }
 }
 
-// v0.13.20: v0.13.14 webspeechCommitSec（強制 commit）と v0.13.9 interim ライブ表示
-// （scheduleInterimSync / _writeLiveInterim / LIVE_INTERIM_KEY）は撤去。
-// v0.13.16 final ごと新段落 + v0.13.17 cap-para-interim 撤去 + v0.13.18 persist
-// + v0.13.19 snapshotActiveToSession の組み合わせで望む動作を達成済みのため不要。
+/* ───────── Web Speech 強制 commit タイマー (v0.13.14) ─────────
+ * settings.webspeechCommitSec 秒ごとに recognition.stop() を呼び出して、
+ * Web Speech に「ここまで」と区切らせる。stop() で現在の interim が final として
+ * onresult に届き、appendRawChunk で transcript の新しい段落になる。
+ * その後 onend が呼ばれ、既存の自動再起動ロジック（state.shouldAutoRestart）が
+ * recognition を再 start するので、認識ループは継続する。
+ *
+ * Gemini Audio の audioChunkSec（MediaRecorder.stop → 再start）と対称的な仕組み。
+ * 0 にすると WebSpeech 任せの既存挙動。岡田斗司夫みたいに長文を続けて喋る人で
+ * final が遅れて字幕がドカっと出るのを防ぐためのコア機能。
+ */
+function restartWebSpeechCommitTimer() {
+  stopWebSpeechCommitTimer();
+  const sec = Number(state.settings.webspeechCommitSec || 0);
+  if (sec <= 0) return; // OFF
+  const intervalMs = Math.max(2, Math.min(20, sec)) * 1000;
+  state.webspeechCommitTimer = setInterval(() => {
+    if (!state.isRecording) return;
+    if (state.settings.inputMode !== 'web-speech') return;
+    if (!state.recognition) return;
+    try {
+      // stop() を呼ぶと Web Speech が現在の interim を final として吐き出し、
+      // 続いて onend が走る → 既存の自動再起動ロジックで rec.start() が走る。
+      state.recognition.stop();
+      diagLog.info(`Web Speech 強制 commit (${sec}秒)`);
+    } catch (e) {
+      console.warn('webspeech commit stop failed', e);
+    }
+  }, intervalMs);
+}
+function stopWebSpeechCommitTimer() {
+  if (state.webspeechCommitTimer) {
+    clearInterval(state.webspeechCommitTimer);
+    state.webspeechCommitTimer = null;
+  }
+}
+
+/* ───────── Web Speech interim を字幕／オーバーレイへライブ反映 (v0.13.9) ─────────
+ * Web Speech API は final（確定）が来るまで字幕に何も出さない仕様。長文喋り
+ * （YouTube 等）で final が遅れると一気にドカっと表示されて読めない。
+ * → 認識途中の interim を localStorage 専用キーで captions.html に同期し、
+ *   字幕／オーバーレイの末尾に「途中表示」として薄く流す。
+ * sessions 全体の再保存は重いので、interim 専用キーで軽量同期。
+ */
+const LIVE_INTERIM_KEY = 'dictation:liveInterim';
+let _interimSyncTimer = null;
+let _pendingInterim = '';
+
+function _writeLiveInterim(text) {
+  try {
+    const targetId = state.recordingSessionId || state.activeId;
+    const payload = JSON.stringify({
+      sessionId: targetId,
+      text: text || '',
+      opacity: Number(state.settings.webspeechInterimOpacity ?? 70),
+      updatedAt: Date.now(),
+    });
+    localStorage.setItem(LIVE_INTERIM_KEY, payload);
+  } catch (e) { /* quota 等は無視 */ }
+}
+
+function scheduleInterimSync(interim, gotFinal) {
+  // Web Speech モードのみ動作
+  if (state.settings.inputMode !== 'web-speech') return;
+  // final 確定時は interim を即時クリア（次の発話まで字幕の途中表示を消す）
+  if (gotFinal) {
+    if (_interimSyncTimer) { clearTimeout(_interimSyncTimer); _interimSyncTimer = null; }
+    _pendingInterim = '';
+    _writeLiveInterim('');
+    return;
+  }
+  const debounceMs = Number(state.settings.webspeechInterimDebounceMs ?? 300);
+  // 大きい数値（999999）はユーザーが「表示しない」を選択した状態
+  if (debounceMs >= 99999) {
+    if (_interimSyncTimer) { clearTimeout(_interimSyncTimer); _interimSyncTimer = null; }
+    _pendingInterim = '';
+    _writeLiveInterim('');
+    return;
+  }
+  _pendingInterim = interim || '';
+  if (_interimSyncTimer) clearTimeout(_interimSyncTimer);
+  if (debounceMs <= 0) {
+    // 即時モード
+    _writeLiveInterim(_pendingInterim);
+    return;
+  }
+  _interimSyncTimer = setTimeout(() => {
+    _interimSyncTimer = null;
+    _writeLiveInterim(_pendingInterim);
+  }, debounceMs);
+}
 
 function appendRawChunk(text) {
   if (!text || !text.trim()) return;
@@ -1055,6 +1157,10 @@ function buildRecognition() {
         hideSilenceDialog();
       }
     }
+    // v0.13.9: 字幕／オーバーレイの interim ライブ表示用に、録音対象セッションの
+    // interim を localStorage 経由で同期する。final 確定時は appendRawChunk が
+    // transcript に取り込み、その後 interim はクリアされる流れ。
+    scheduleInterimSync(interim, gotFinal);
   };
 
   rec.onerror = (event) => {
@@ -1173,11 +1279,13 @@ async function startRecording() {
   state.isRecording = true;
   state.shouldAutoRestart = true;
   state.recordingSessionId = state.activeId; // BG録音用に固定
-  diagLog.info(`録音開始 (Web Speech) session=${state.recordingSessionId?.slice(-6)}`);
+  diagLog.info(`録音開始 (Web Speech) session=${state.recordingSessionId?.slice(-6)} commitSec=${state.settings.webspeechCommitSec || 0}`);
   try {
     state.recognition.start();
     setRecordingUI(true);
     resetLongSilenceTimer();
+    // v0.13.14: Web Speech 強制 commit タイマーを起動（commitSec=0 なら何もしない）
+    restartWebSpeechCommitTimer();
   } catch (e) {
     console.error('start failed', e);
     setStatus('error', '開始失敗: ' + e.message);
@@ -1199,6 +1307,8 @@ function stopRecording() {
   if (state.settings.inputMode === 'gemini-audio') {
     stopGeminiAudioRecording();
   } else {
+    // v0.13.14: 強制 commit タイマーを止めてから recognition を止める
+    stopWebSpeechCommitTimer();
     if (state.recognition) {
       try { state.recognition.stop(); } catch {}
     }
@@ -1437,7 +1547,20 @@ function applyGeminiOnlyVisibility(animated = true) {
   }
 }
 
-// v0.13.20: applyWebSpeechOnlyVisibility は webspeech-only-fields 撤去に伴い不要。
+function applyWebSpeechOnlyVisibility(animated = true) {
+  const el = document.getElementById('webspeech-only-fields');
+  if (!el) return;
+  const isWs = els.modeWebSpeech && els.modeWebSpeech.checked;
+  if (!animated) {
+    const prev = el.style.transition;
+    el.style.transition = 'none';
+    el.classList.toggle('is-hidden', !isWs);
+    void el.offsetWidth;
+    el.style.transition = prev;
+  } else {
+    el.classList.toggle('is-hidden', !isWs);
+  }
+}
 
 async function populateAudioDevices() {
   if (!els.inputAudioDevice) return;
@@ -3578,8 +3701,12 @@ function openSettings() {
   }
   els.inputChunkSec.value = state.settings.audioChunkSec || 12;
   if (els.inputMinChunkBytes) els.inputMinChunkBytes.value = state.settings.audioMinChunkBytes ?? 400;
+  if (els.inputWsInterimDebounce) els.inputWsInterimDebounce.value = String(state.settings.webspeechInterimDebounceMs ?? 300);
+  if (els.inputWsInterimOpacity) els.inputWsInterimOpacity.value = String(state.settings.webspeechInterimOpacity ?? 70);
+  if (els.inputWsCommitSec) els.inputWsCommitSec.value = String(state.settings.webspeechCommitSec ?? 6);
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
+  applyWebSpeechOnlyVisibility(/* animated */ false);
   els.fontTranscript.value = state.settings.transcriptFont;
   els.sizeTranscript.value = state.settings.transcriptSize;
   els.fontMemo.value = state.settings.memoFont;
@@ -3613,6 +3740,16 @@ function saveSettingsFromForm() {
   state.settings.audioDeviceId = els.inputAudioDevice ? els.inputAudioDevice.value : '';
   state.settings.audioChunkSec = Math.max(5, Math.min(60, Number(els.inputChunkSec.value) || 12));
   if (els.inputMinChunkBytes) state.settings.audioMinChunkBytes = Math.max(100, Math.min(5000, Number(els.inputMinChunkBytes.value) || 400));
+  if (els.inputWsInterimDebounce) state.settings.webspeechInterimDebounceMs = Math.max(0, Math.min(999999, Number(els.inputWsInterimDebounce.value) ?? 300));
+  if (els.inputWsInterimOpacity) state.settings.webspeechInterimOpacity = Math.max(0, Math.min(100, Number(els.inputWsInterimOpacity.value) || 70));
+  if (els.inputWsCommitSec) {
+    const newSec = Math.max(0, Math.min(20, Number(els.inputWsCommitSec.value) || 0));
+    if (newSec !== state.settings.webspeechCommitSec) {
+      state.settings.webspeechCommitSec = newSec;
+      // 録音中なら即時タイマー反映
+      if (typeof restartWebSpeechCommitTimer === 'function') restartWebSpeechCommitTimer();
+    }
+  }
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));
   state.settings.memoFont = els.fontMemo.value;
@@ -4597,9 +4734,27 @@ document.getElementById('btn-diag-clear')?.addEventListener('click', () => {
   diagLog.clear();
 });
 
-// モード切替で Gemini 専用フィールドの表示/非表示をアニメーション
-if (els.modeWebSpeech) els.modeWebSpeech.addEventListener('change', () => applyGeminiOnlyVisibility(true));
-if (els.modeGemini) els.modeGemini.addEventListener('change', () => applyGeminiOnlyVisibility(true));
+// モード切替で Gemini 専用 / Web Speech 専用フィールドの表示/非表示をアニメーション
+if (els.modeWebSpeech) {
+  els.modeWebSpeech.addEventListener('change', () => {
+    applyGeminiOnlyVisibility(true);
+    applyWebSpeechOnlyVisibility(true);
+  });
+}
+if (els.modeGemini) {
+  els.modeGemini.addEventListener('change', () => {
+    applyGeminiOnlyVisibility(true);
+    applyWebSpeechOnlyVisibility(true);
+  });
+}
+
+// Web Speech 設定をデフォルトに戻すボタン（v0.13.9）
+if (els.btnWebSpeechDefaults) {
+  els.btnWebSpeechDefaults.addEventListener('click', () => {
+    if (els.inputWsInterimDebounce) els.inputWsInterimDebounce.value = String(WEB_SPEECH_DEFAULTS.webspeechInterimDebounceMs);
+    if (els.inputWsInterimOpacity) els.inputWsInterimOpacity.value = String(WEB_SPEECH_DEFAULTS.webspeechInterimOpacity);
+  });
+}
 
 /* ───────── Zoom bar (bottom-right) ───────── */
 function setZoom(pct, persist = true) {

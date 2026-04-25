@@ -582,7 +582,12 @@ body.broadcast-mode #cap-box-text {
   text-decoration: underline;
 }
 
-/* v0.13.20: 旧 .cap-para-interim (v0.13.9) は撤去。captions.js / app.js とともに不要化。 */
+/* Web Speech interim ライブ表示 (v0.13.9) — opacity は inline で個別指定 */
+.cap-para-interim {
+  /* 「途中である」記号として斜体は付けない（読みづらくなる）。
+     opacity だけで識別。確定すると別の cap-para としてフェードイン置換される流れ。 */
+  font-style: normal;
+}
 
 /* ストリームモード（v0.13.12）— 1行単位でスクロール積上げ表示
  * 既存の cap-para から余分な margin を削って、行間隔は line-height に任せる。
@@ -590,7 +595,7 @@ body.broadcast-mode #cap-box-text {
 .cap-stream-line {
   margin: 0 0 0.18em !important;
 }
-.cap-stream-line:not(.latest) {
+.cap-stream-line:not(.latest):not(.cap-para-interim) {
   opacity: 0.85;
 }
 
