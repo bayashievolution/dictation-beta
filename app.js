@@ -3656,7 +3656,16 @@ function openSettings() {
   }
   els.inputChunkSec.value = state.settings.audioChunkSec || 12;
   if (els.inputMinChunkBytes) els.inputMinChunkBytes.value = state.settings.audioMinChunkBytes ?? 400;
-  if (els.inputWsCommitSec) els.inputWsCommitSec.value = String(state.settings.webspeechCommitSec ?? 6);
+  if (els.inputWsCommitSec) {
+    // v0.13.29: localStorage に古い値（3/4/5 等、v0.13.26 で削除した選択肢）が
+    // 残っていると、UI のセレクトが空欄表示になる（option に value マッチがない）。
+    // 妥当な選択肢に含まれない値は既定 6 にフォールバックして state.settings も
+    // 即時更新（次回 saveSettingsFromForm で localStorage にも反映される）。
+    let v = Number(state.settings.webspeechCommitSec ?? 6);
+    if (![0, 6, 8, 10].includes(v)) v = 6;
+    els.inputWsCommitSec.value = String(v);
+    state.settings.webspeechCommitSec = v;
+  }
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   applyWebSpeechOnlyVisibility(/* animated */ false);
