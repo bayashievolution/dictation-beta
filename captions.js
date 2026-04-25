@@ -802,8 +802,11 @@ const overlayState = {
   lastError: null,
   intentionalClose: false,             // 拡張側から exit/disconnect を意図的に出した直後 true
                                        // disconnect ハンドラがこれを見て「予期せず切断」との
-                                       // 区別をつける。Phase 3 の右クリック「接続を切る」設計
-                                       // にも同じフラグで対応可能（仕様 Q2 案 B）。
+                                       // 区別をつける（仕様 Q2 案 B）。
+  lastGoodbyeReason: null,             // ネイティブから受信した最後の goodbye.reason
+                                       // 'exit_requested' / 'user_close' (overlay v0.3.0+)
+  position: null,                      // {x, y, width, height, monitor, localX, localY}
+                                       // position_changed 受信で更新 (overlay v0.3.0+)
 };
 
 function isOverlayConnected() {
@@ -937,18 +940,19 @@ function handleNativeMessage(msg) {
       updateOverlayUI();
       break;
     case 'position_changed':
-      // Phase 3 で対応予定。
-      // 仕様：x/y/width/height は仮想デスクトップ物理ピクセル（HiDPI スケール済、負値あり）
-      // 拡張側で UI に反映する場合は overlayState.monitors と組み合わせて
-      // どのモニタの何ピクセル位置か逆引き可能。Phase 3 リリース時に実装。
-      console.log('[overlay] position_changed (Phase 3 で UI 反映予定):', msg);
+      // overlay v0.3.0+：ユーザーがドラッグで字幕窓を動かした時に
+      // 150ms デバウンスで自動送出される。x/y/width/height は仮想デスクトップ
+      // 物理ピクセル（HiDPI スケール済、負値あり）。
+      onOverlayPositionChanged(msg);
       break;
-    case 'bye':
-      // Phase 3 で追加予定の予告メッセージ（Q2 案 A）。
-      // ネイティブ側が右クリックメニュー「接続を切る」等で自発的に終了する直前に送る。
-      // 受信した時点で「次の onDisconnect は意図的」とマークしておく。
-      console.log('[overlay] bye received → mark intentional close');
+    case 'goodbye':
+      // overlay v0.3.0+：ネイティブが自発的に終了する直前に送る予告（Q2 案 A）。
+      // reason: 'exit_requested'（拡張からの exit 受信で終了）
+      //       | 'user_close'（システムトレイ「オーバーレイを終了」で終了 v0.3.1+）
+      // 受信した時点で「次の onDisconnect は意図的」とマークし、reason を保存。
+      console.log(`[overlay] goodbye received reason=${msg.reason} → mark intentional close`);
       overlayState.intentionalClose = true;
+      overlayState.lastGoodbyeReason = msg.reason || null;
       break;
     default:
       console.log('[overlay] unknown msg type, ignored:', msg.type);
@@ -959,35 +963,43 @@ function handleNativeMessage(msg) {
 function handleNativeDisconnect() {
   const err = chrome.runtime.lastError;
   const wasIntentional = overlayState.intentionalClose;
+  const goodbyeReason = overlayState.lastGoodbyeReason;
   overlayState.intentionalClose = false;       // 1ショットで消費
+  overlayState.lastGoodbyeReason = null;
   console.warn('[overlay] disconnect', {
     err,
     lastErrorMessage: err?.message,
     hadPort: !!overlayState.port,
     wasConnected: overlayState.connected,
     wasIntentional,
+    goodbyeReason,
   });
   overlayState.port = null;
   overlayState.connected = false;
   // 意図的終了なら lastError は表示しない（拡張側都合の正常切断）
   overlayState.lastError = wasIntentional ? null : (err?.message || null);
-  if (_overlayUserInitiated) {
-    if (wasIntentional) {
+  if (wasIntentional) {
+    // 意図的切断：reason に応じて分岐
+    if (goodbyeReason === 'user_close') {
+      // システムトレイ「オーバーレイを終了」（拡張は知らない世界の操作）
+      showOverlayToast('オーバーレイがトレイメニューから終了されました', 'info');
+    } else if (_overlayUserInitiated) {
+      // 拡張側の「切断」ボタンから（exit_requested or 旧ルート）
       showOverlayToast('オーバーレイを切断しました', 'info');
-    } else {
+    }
+    // それ以外（reason 不明の意図的）は静かに終わる
+  } else {
+    // 予期せぬ切断：lastError があるなら必ず警告（ユーザ起因かどうか問わず）
+    if (overlayState.lastError) {
       showOverlayToast(
-        `オーバーレイ切断${overlayState.lastError ? '：' + overlayState.lastError : ''}`,
+        `オーバーレイが予期せず切断：${overlayState.lastError}`,
         'error'
       );
+    } else if (_overlayUserInitiated) {
+      showOverlayToast('オーバーレイ切断', 'error');
     }
-    _overlayUserInitiated = false;
-  } else if (!wasIntentional && overlayState.lastError) {
-    // ユーザーが押した訳でもないのに突然切れたケース → 警告トースト
-    showOverlayToast(
-      `オーバーレイが予期せず切断：${overlayState.lastError}`,
-      'error'
-    );
   }
+  _overlayUserInitiated = false;
   onOverlayDisconnected();
 }
 
@@ -996,6 +1008,7 @@ function onOverlayDisconnected() {
   overlayState.platform = null;
   overlayState.capabilities = [];
   overlayState.monitors = [];
+  overlayState.position = null;
   // clickThrough は保持（次回接続まで前回値を保持）
   updateOverlayUI();
 }
@@ -1070,6 +1083,33 @@ function setOverlayMonitor(index) {
   }
 }
 
+/** position_changed 受信ハンドラ（overlay v0.3.0+ / Q1 サンプル準拠）
+ *  仕様：x/y/width/height は仮想デスクトップ物理ピクセル
+ *  - monitors と組合わせて「どのモニタの何ピクセル位置か」を逆引き
+ *  - HiDPI を考慮するなら scale_factor で logical px に換算
+ */
+function onOverlayPositionChanged(evt) {
+  if (!evt || typeof evt !== 'object') return;
+  const m = overlayState.monitors.find(
+    mi => evt.x >= mi.x && evt.x < mi.x + mi.width
+       && evt.y >= mi.y && evt.y < mi.y + mi.height
+  );
+  const localX = m ? evt.x - m.x : evt.x;
+  const localY = m ? evt.y - m.y : evt.y;
+  overlayState.position = {
+    x: evt.x,
+    y: evt.y,
+    width: evt.width,
+    height: evt.height,
+    monitorIndex: m ? m.index : null,
+    localX,
+    localY,
+    scaleFactor: m ? m.scale_factor : 1,
+  };
+  console.log('[overlay] position_changed', overlayState.position);
+  updateOverlayUI();
+}
+
 function sendOverlayTestCaption() {
   if (!isOverlayConnected()) {
     alert('ネイティブオーバーレイが見つかりません。\n設定パネルの「接続」ボタンを押してください。');
@@ -1101,7 +1141,19 @@ function updateOverlayUI() {
   if (stat) {
     if (isOverlayConnected()) {
       const caps = overlayState.capabilities.join(', ') || '-';
-      stat.textContent = `接続中 v${overlayState.version} (${overlayState.platform})\ncapabilities: ${caps}`;
+      let lines = [
+        `接続中 v${overlayState.version} (${overlayState.platform})`,
+        `capabilities: ${caps}`,
+      ];
+      // position_changed (overlay v0.3.0+) を受信していたら現在位置を表示
+      if (overlayState.position) {
+        const p = overlayState.position;
+        const posLabel = p.monitorIndex != null
+          ? `モニタ #${p.monitorIndex} (${p.localX}, ${p.localY}) ${p.width}×${p.height}`
+          : `仮想 (${p.x}, ${p.y}) ${p.width}×${p.height}`;
+        lines.push(`位置: ${posLabel}`);
+      }
+      stat.textContent = lines.join('\n');
       stat.className = 'cap-overlay-status connected';
     } else {
       stat.textContent = overlayState.lastError ? `未接続：${overlayState.lastError}` : '未接続';
