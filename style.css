@@ -2169,6 +2169,10 @@ mark.search-hit.current {
   text-transform: uppercase;
   margin-bottom: 12px;
 }
+/* v0.13.31: グループ途中に置かれたサブ見出し（前のフィールドと視覚分離するため上マージン） */
+.field + .field-group-title {
+  margin-top: 16px;
+}
 
 .font-row {
   display: grid;

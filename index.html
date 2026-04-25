@@ -354,6 +354,10 @@
                 <small class="field-hint">N 秒ごとに「ここまで」と区切って字幕／オーバーレイに送る。話し手のリズムに合わせて調整。長文喋りでドカっと出るのを防ぐ。</small>
               </label>
 
+              <!-- v0.13.31: ここから下は字幕／オーバーレイ用設定。文字起こしペインは触らない。
+                   完全分離（dictation:liveCaption キー経由）。 -->
+              <h3 class="field-group-title">字幕用設定</h3>
+
               <!-- v0.13.31: 真の「改行」方式。recognition.stop() を呼ばずに、
                    interim を N 字単位にカットして新段落として字幕／オーバーレイに流す。
                    stop しない＝Web Speech は走り続ける＝ブロック間の言葉が失われない。
