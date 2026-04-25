@@ -1023,9 +1023,17 @@ function resetSilenceTimer() {
 
 function resetLongSilenceTimer() {
   if (state.longSilenceTimer) clearTimeout(state.longSilenceTimer);
+  state.longSilenceTimer = null;
+  // v0.13.28: 録音停止中は無音検出ダイアログを起動しない。
+  // 旧来は onresult が録音停止後に遅れて発火した時など、停止後に
+  // タイマーが再起動されて「録音停止中なのに無音ダイアログが出る」
+  // 症状があった（やっさん指摘）。「録音中にもかかわらず文字が出ない」
+  // 場合のみ出すのが正しい挙動。
+  if (!state.isRecording) return;
   if (!state.settings.autoStopEnabled) return;
   state.longSilenceTimer = setTimeout(() => {
     state.longSilenceTimer = null;
+    if (!state.isRecording) return; // タイマー発火時の二重防御
     showSilenceDialog();
   }, state.settings.autoStopSec * 1000);
 }
@@ -1037,6 +1045,8 @@ function clearAllTimers() {
 }
 
 function showSilenceDialog() {
+  // v0.13.28: 三重防御。録音停止中は絶対に出さない。
+  if (!state.isRecording) return;
   diagLog.info(`無音停止ダイアログ発火（${state.settings.autoStopSec}秒無音と判定）`);
   els.silenceDialog.classList.remove('hidden');
   state.silenceCountdownLeft = 30;
