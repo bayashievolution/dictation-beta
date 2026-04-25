@@ -36,6 +36,8 @@ const DEFAULT_SETTINGS = {
   shadowBlur: 6,
   lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため）
   paraCount: 2,
+  // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
+  scrollLineCount: 1,
   followLive: true,
 
   // 配信モード（OBS向け）
@@ -131,6 +133,7 @@ const els = {
   inLineHeight: document.getElementById('cap-line-height'),
   outLineHeight: document.getElementById('cap-lh-out'),
   inParaCount: document.getElementById('cap-para-count'),
+  inScrollLineCount: document.getElementById('cap-scroll-line-count'),
   inFollowLive: document.getElementById('cap-follow-live'),
   inBroadcast: document.getElementById('cap-broadcast-mode'),
   inKeyColor: document.getElementById('cap-key-color'),
@@ -279,6 +282,13 @@ function reflectSettingsToUI() {
   els.inLineHeight.value = settings.lineHeightTenth;
   els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
   els.inParaCount.value = String(settings.paraCount);
+  if (els.inScrollLineCount) {
+    // v0.13.31: 範囲外（1〜3 以外）の旧値は 1 にフォールバック
+    let v = Number(settings.scrollLineCount ?? 1);
+    if (![1, 2, 3].includes(v)) v = 1;
+    els.inScrollLineCount.value = String(v);
+    settings.scrollLineCount = v;
+  }
   els.inFollowLive.checked = settings.followLive;
   if (els.inBroadcast) els.inBroadcast.checked = !!settings.broadcastMode;
   if (els.inKeyColor) els.inKeyColor.value = settings.keyColor;
@@ -531,6 +541,15 @@ function bindSettingsUI() {
     commit();
     renderLatest();
   });
+  if (els.inScrollLineCount) {
+    els.inScrollLineCount.addEventListener('change', () => {
+      // v0.13.31: スクロールする行数（バッチサイズ）。範囲は 1〜3。
+      const v = Math.max(1, Math.min(3, Number(els.inScrollLineCount.value) || 1));
+      settings.scrollLineCount = v;
+      commit();
+      renderLatest();
+    });
+  }
   els.inFollowLive.addEventListener('change', () => { settings.followLive = els.inFollowLive.checked; commit(); });
 
   // 配信モードトグル
@@ -870,6 +889,11 @@ function loadActiveSession() {
 /** 前回レンダリングしたテキストを保持してトランジション判定に使う */
 let _lastRenderedText = '';
 
+/** v0.13.31: 字幕バッファのスクロール演出用 state */
+let _lastShownSliceTs = []; // 前回表示した slice の ts リスト（新規行判定用）
+let _pendingSliceCount = 0;  // バッチング待ち（次の表示更新までに溜まった新規 slice 数）
+let _lastBufLength = 0;      // 前回 renderLatest 呼び出し時の liveBuf.length
+
 /** v0.13.31: 字幕バッファ（app.js が 30 字 slice 単位で書く配列）を読む */
 function loadCaptionBuffer() {
   try {
@@ -909,24 +933,53 @@ function renderLatest() {
     return;
   }
 
-  // v0.13.31: 字幕バッファ優先（完全分離）。
+  // v0.13.31: 字幕バッファ優先（完全分離 + バッチング + スクロール演出）。
   // app.js が 30 字 slice 単位で書く dictation:liveCaption を読み、存在すれば
   // それを字幕に反映。文字起こしペインの transcript（自然 final 単位）は触らない。
-  // やっさん発「字幕に表示される内容＝バッファだから」の実装。
+  //
+  // バッチング：scrollLineCount に達するまで表示更新を待つ（早送り感）。
+  // スクロール演出：新規スライスは .enter クラスを付与してアニメーション。
   const liveBuf = loadCaptionBuffer();
   if (liveBuf && liveBuf.length > 0) {
     const n = Math.max(1, Math.min(5, settings.paraCount || 2));
+    const scrollN = Math.max(1, Math.min(3, settings.scrollLineCount || 1));
+
+    // 新規 slice 数を蓄積（バッファ末尾の追加分）
+    const delta = Math.max(0, liveBuf.length - _lastBufLength);
+    _pendingSliceCount += delta;
+    _lastBufLength = liveBuf.length;
+
+    // 初回表示でなければ、scrollN 個溜まるまで表示更新を待つ
+    const isFirstShow = _lastShownSliceTs.length === 0;
+    if (!isFirstShow && _pendingSliceCount < scrollN) {
+      // バッチング待ち：表示はそのまま（return せずステータスだけ更新）
+      const updated = Number(liveBuf[liveBuf.length - 1].ts) || 0;
+      const live = Date.now() - updated < 15000;
+      setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
+      return;
+    }
+    // 表示更新
+    _pendingSliceCount = 0;
+
     const latest = liveBuf.slice(-n);
     const html = latest.map((slice, idx) => {
       const isLast = idx === latest.length - 1;
-      const cls = 'cap-para' + (isLast ? ' latest' : '');
-      return `<p class="${cls}">${escapeHtml(String(slice.text || ''))}</p>`;
+      const isNew = !_lastShownSliceTs.includes(slice.ts);
+      const cls = 'cap-para' + (isLast ? ' latest' : '') + (isNew ? ' enter' : '');
+      return `<p class="${cls}" data-slice-ts="${slice.ts}">${escapeHtml(String(slice.text || ''))}</p>`;
     }).join('');
     renderTextIntoBox(html);
+    _lastShownSliceTs = latest.map(s => Number(s.ts));
+
     const updated = Number(liveBuf[liveBuf.length - 1].ts) || 0;
     const live = Date.now() - updated < 15000;
     setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
     return;
+  } else {
+    // バッファが空（録音停止後等）なら state をリセット
+    _lastShownSliceTs = [];
+    _pendingSliceCount = 0;
+    _lastBufLength = 0;
   }
 
   // 以下、既存のブロックモード（最新N段落表示、transcript ベース）。

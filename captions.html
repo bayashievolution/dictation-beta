@@ -122,28 +122,37 @@
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
       </div>
 
-      <!-- v0.13.15 整理：字幕表示モードを 2 択にシンプル化 -->
-      <div class="cap-field">
+      <!-- v0.13.31: 字幕表示モードセレクトはやっさん指示で UI 非表示。
+           内部は block 固定。flow/stream 機能は将来用に残置（hidden）。 -->
+      <div class="cap-field hidden">
         <label class="cap-label">字幕表示モード</label>
         <select id="cap-display-mode">
-          <option value="block" selected>ブロック（最新N段落をスパッと差替え）</option>
-          <option value="flow">自動行スクロール（1行ずつ下から積み上がる）</option>
-          <!-- 'stream' は v0.13.12 互換用（手動最大文字数モード）。UI からは外す。 -->
+          <option value="block" selected>ブロック</option>
+          <option value="flow">自動行スクロール</option>
         </select>
-        <small class="cap-hint">
-          <strong>ブロック</strong>＝段落を丸ごと表示・差替え。
-          <strong>自動行スクロール</strong>＝字幕窓の幅で自動改行しつつ、文字起こしペインのように下から積み上がる。長文喋りに追従しやすい。
-        </small>
       </div>
 
       <div class="cap-field" id="cap-block-only-fields">
-        <label class="cap-label">表示する段落数</label>
+        <label class="cap-label">表示する行数</label>
         <select id="cap-para-count">
-          <option value="1">最新1段落のみ（最大に大きく）</option>
-          <option value="2" selected>最新2段落</option>
-          <option value="3">最新3段落</option>
-          <option value="5">最新5段落（履歴多め）</option>
+          <option value="1">1行</option>
+          <option value="2" selected>2行</option>
+          <option value="3">3行</option>
+          <option value="5">5行（履歴多め）</option>
         </select>
+        <small class="cap-hint">同時に表示する行数（最新 N 段落）。1 行だと最も大きく表示。</small>
+      </div>
+
+      <!-- v0.13.31: スクロールする行数（バッチサイズ）。
+           1 = 1 段落ずつ流れる（自然）、N = N 段落溜まってから一気に N 行流す（早送り感）。 -->
+      <div class="cap-field" id="cap-scroll-count-field">
+        <label class="cap-label">スクロールする行数</label>
+        <select id="cap-scroll-line-count">
+          <option value="1" selected>1行ずつ</option>
+          <option value="2">2行ずつ</option>
+          <option value="3">3行ずつ</option>
+        </select>
+        <small class="cap-hint">字幕バッファに何段落溜まったらスクロールするか。1 だとパッと替わらず、前の行を表示しつつ 1 行ずつ下から押し上がる演出。</small>
       </div>
 
       <div class="cap-field hidden" id="cap-stream-only-fields">

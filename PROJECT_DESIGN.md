@@ -342,6 +342,85 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 ---
 
+### 2026-04-26 v0.13.31 字幕スクロール演出 + 表示モード非表示
+
+**やっさん発の要望**：
+- 字幕表示モード（block / 自動行スクロール）セレクトを **UI から非表示**、内部 block 固定
+- 「字幕がパッと切り替わる」のではなく、**前の行を表示しつつ下から押し上げるスクロール演出**
+- 「表示する段落数」→「表示する行数」にラベル変更
+- 「スクロールする行数」（バッチサイズ）を新設
+
+**「スクロールする行数」の解釈（やっさん確認済み・バッチサイズ）**：
+- 1 = 1 段落ずつ流れる（自然）
+- N = N 段落溜まってから一気に N 行流す（早送り感）
+
+**実装**（captions.js）：
+
+```js
+// state（モジュールスコープ）
+let _lastShownSliceTs = []; // 前回表示した slice の ts
+let _pendingSliceCount = 0;  // バッチング待ち数
+let _lastBufLength = 0;      // 前回 renderLatest 時の liveBuf.length
+
+// renderLatest 内（字幕バッファ優先分岐）
+const delta = Math.max(0, liveBuf.length - _lastBufLength);
+_pendingSliceCount += delta;
+_lastBufLength = liveBuf.length;
+
+const isFirstShow = _lastShownSliceTs.length === 0;
+if (!isFirstShow && _pendingSliceCount < scrollN) {
+  // バッチング待ち：表示更新せずに status だけ更新して return
+  return;
+}
+_pendingSliceCount = 0;
+
+// 描画：新規 slice には .enter クラスを付けてスライドインさせる
+const html = latest.map((slice, idx) => {
+  const isNew = !_lastShownSliceTs.includes(slice.ts);
+  const cls = 'cap-para' + (isLast ? ' latest' : '') + (isNew ? ' enter' : '');
+  return `<p class="${cls}" data-slice-ts="${slice.ts}">${escapeHtml(slice.text)}</p>`;
+}).join('');
+_lastShownSliceTs = latest.map(s => Number(s.ts));
+```
+
+**CSS**（captions.css）：
+
+```css
+#cap-box-text .cap-para.enter {
+  animation: capParaSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes capParaSlideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+```
+
+既存の `#cap-box-text` 全体の transition（trans-fade / trans-slide-* / trans-scroll）
+とは独立で動作。**段落単位**でスライドインするので、「前の行は位置維持、新規段落だけ
+下から押し上がる」という挙動になる。
+
+**バッファの空リセット**：録音停止で `liveBuf = null` のとき、内部 state（`_lastShownSliceTs`
+など）も 0 にリセット。次の録音開始時に過去の ts が混ざらないようにする。
+
+**設定 UI（captions.html）**：
+- 字幕表示モードセレクト → `class="cap-field hidden"` で非表示（機能・state は残置）
+- 「表示する段落数」 → 「表示する行数」にラベル変更（中身は paraCount のまま）
+- 「スクロールする行数」新設（select 1/2/3、既定 1）
+
+**オーバーレイへの未適用**：
+やっさんの観察通り、現状 dictation-overlay のネイティブ字幕にはアニメーション機能なし
+（NATIVE_MESSAGING_SPEC.md に該当仕様の記載なし）。スクロール演出を overlay にも適用
+するには overlay 側の Tauri/Rust 実装が必要。**今回は captions.html だけ実装**、
+overlay 側は別作業として先送り。dictation-overlay の Notion 掲示板に依頼を残す予定。
+
+⚠️ **直後にやっさんから「ライブキャプションウィンドウ（captions.html）は廃止、
+オーバーレイのみにする」と方針変更**。captions.html の UI/CSS 改修は次の廃止作業で
+無効化される予定。スクロール演出のロジック（バッチサイズ管理、新規 ts 判定）は
+overlay 側に移植する設計の参考として残す。設定（paraCount、scrollLineCount）は
+メイン画面の設定モーダルに移すことになる。
+
+---
+
 ### 2026-04-26 v0.13.31 字幕と文字起こしペインの完全分離（やっさん発「改行はバッファ内だけ」）
 
 **事故の構造**：v0.13.31 の改行文字数（30 字 slice）の実装で、私が `appendRawChunk`

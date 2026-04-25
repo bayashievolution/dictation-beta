@@ -434,6 +434,19 @@ body.osd-mode .cap-status {
 /* なし: アニメクラスは付くが何も起こらない */
 .cap-box.trans-none #cap-box-text.anim-in { animation: none; }
 
+/* v0.13.31: スクロール演出。
+ * バッファに新規 slice が追加されたとき、その段落（.cap-para.enter）だけを
+ * 下からスライドイン。既存表示の段落は位置維持＝「前の行を表示しつつスクロール」感。
+ * 既存の transition（#cap-box-text 全体へのアニメ）とは独立、段落単位で発火する。
+ */
+#cap-box-text .cap-para.enter {
+  animation: capParaSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes capParaSlideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
 /* 継続マーカー「→」（文節途中改行を示す） */
 .osd-cont {
   color: var(--cap-accent);
