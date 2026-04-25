@@ -800,6 +800,10 @@ const overlayState = {
   monitors: [],
   clickThrough: true,                  // 起動時のデフォルトはネイティブ側で ON
   lastError: null,
+  intentionalClose: false,             // 拡張側から exit/disconnect を意図的に出した直後 true
+                                       // disconnect ハンドラがこれを見て「予期せず切断」との
+                                       // 区別をつける。Phase 3 の右クリック「接続を切る」設計
+                                       // にも同じフラグで対応可能（仕様 Q2 案 B）。
 };
 
 function isOverlayConnected() {
@@ -881,6 +885,11 @@ function showOverlayToast(message, kind = 'info') {
 
 function disconnectOverlay() {
   if (!overlayState.port) return;
+  // 「意図的終了」マーカー：disconnect ハンドラがエラー扱いしないように
+  overlayState.intentionalClose = true;
+  // 仕様 4.2 exit を明示送信。ネイティブ側はこれで「拡張クラッシュではない」と判別できる。
+  // Phase 3 で Bye が追加されたら handleNativeMessage で受信予定。
+  try { overlayState.port.postMessage({ type: 'exit' }); } catch (_) {}
   try { overlayState.port.disconnect(); } catch (_) {}
   overlayState.port = null;
   overlayState.connected = false;
@@ -928,7 +937,18 @@ function handleNativeMessage(msg) {
       updateOverlayUI();
       break;
     case 'position_changed':
-      // Phase 3 で対応予定
+      // Phase 3 で対応予定。
+      // 仕様：x/y/width/height は仮想デスクトップ物理ピクセル（HiDPI スケール済、負値あり）
+      // 拡張側で UI に反映する場合は overlayState.monitors と組み合わせて
+      // どのモニタの何ピクセル位置か逆引き可能。Phase 3 リリース時に実装。
+      console.log('[overlay] position_changed (Phase 3 で UI 反映予定):', msg);
+      break;
+    case 'bye':
+      // Phase 3 で追加予定の予告メッセージ（Q2 案 A）。
+      // ネイティブ側が右クリックメニュー「接続を切る」等で自発的に終了する直前に送る。
+      // 受信した時点で「次の onDisconnect は意図的」とマークしておく。
+      console.log('[overlay] bye received → mark intentional close');
+      overlayState.intentionalClose = true;
       break;
     default:
       console.log('[overlay] unknown msg type, ignored:', msg.type);
@@ -938,16 +958,35 @@ function handleNativeMessage(msg) {
 
 function handleNativeDisconnect() {
   const err = chrome.runtime.lastError;
-  console.warn('[overlay] disconnect', { err, lastErrorMessage: err?.message, hadPort: !!overlayState.port, wasConnected: overlayState.connected });
+  const wasIntentional = overlayState.intentionalClose;
+  overlayState.intentionalClose = false;       // 1ショットで消費
+  console.warn('[overlay] disconnect', {
+    err,
+    lastErrorMessage: err?.message,
+    hadPort: !!overlayState.port,
+    wasConnected: overlayState.connected,
+    wasIntentional,
+  });
   overlayState.port = null;
   overlayState.connected = false;
-  overlayState.lastError = err?.message || null;
+  // 意図的終了なら lastError は表示しない（拡張側都合の正常切断）
+  overlayState.lastError = wasIntentional ? null : (err?.message || null);
   if (_overlayUserInitiated) {
+    if (wasIntentional) {
+      showOverlayToast('オーバーレイを切断しました', 'info');
+    } else {
+      showOverlayToast(
+        `オーバーレイ切断${overlayState.lastError ? '：' + overlayState.lastError : ''}`,
+        'error'
+      );
+    }
+    _overlayUserInitiated = false;
+  } else if (!wasIntentional && overlayState.lastError) {
+    // ユーザーが押した訳でもないのに突然切れたケース → 警告トースト
     showOverlayToast(
-      `オーバーレイ切断${overlayState.lastError ? '：' + overlayState.lastError : ''}`,
+      `オーバーレイが予期せず切断：${overlayState.lastError}`,
       'error'
     );
-    _overlayUserInitiated = false;
   }
   onOverlayDisconnected();
 }
