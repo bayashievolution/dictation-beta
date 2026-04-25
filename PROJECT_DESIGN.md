@@ -10,11 +10,12 @@
 
 ### 現状サマリ
 
-- **dictation-beta v0.13.31**：真の「改行」方式（stop しない interim slice）を実装。**ブロック間の言葉抜けゼロ**を達成（v0.13.30 の自滅事故からのやり直し）
+- **dictation-beta v0.13.31**：真の「改行」方式（stop しない interim slice）+ 無音 stop（短い発話の取りこぼし防止）を実装。**ブロック間の言葉抜けゼロ**を達成（v0.13.30 の自滅事故からのやり直し）
 - **dictation-overlay v0.3.4** との Native Messaging 連携も動作中（OS レベル透過字幕オーバーレイ）
 - **主要設定**：
   - 「Web Speech チャンク間隔（秒）」セレクト（OFF / 6（既定）/ 8 / 10）：時間ベース強制 commit、stop() を呼ぶ。**残置（既存挙動を壊さないため）**
-  - 「Web Speech 改行文字数（10〜100）」number input（既定 30）：interim を N 字単位で改行＝新段落として字幕に流す。**stop() を呼ばない＝言葉抜けゼロ**
+  - 「Web Speech 改行文字数（10〜100）」number-stepper（既定 30）：interim を N 字単位で改行＝新段落として字幕に流す。**stop() を呼ばない＝言葉抜けゼロ**
+  - 「Web Speech 無音 stop（秒、0=OFF）」number-stepper（既定 3）：interim の中身が N 秒変化しない＝本当に喋りが止まった、と判定して stop()。短い発話を 6 秒待たせず字幕に流す。v0.13.30 の誤発火（onresult タイミング判定）は中身比較で回避
 
 ### 今日（2026-04-26）の作業の軌跡
 
@@ -338,6 +339,53 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 加えて、**新規入力 UI を入れる前に既存コードで似た部品（`.number-stepper` 等）を grep して
 流用を最優先**。design-system に書いてある「**類似の UI は同じクラスを振る**」（principles.md L195）。
+
+---
+
+### 2026-04-26 v0.13.31 無音 stop（短い発話取りこぼし防止）
+
+**背景**：v0.13.31 の改行文字数（30字）は、達するまで字幕に流さない。
+30 字未満で喋り終わった発話は、Web Speech が自然に final を出すか、既存の
+時間ベース 6 秒（webspeechCommitSec）で stop() するまで字幕に出ない。
+やっさんから「30 字未満で黙ったら字幕に出ないのでは？」「指定時間無音で
+stop() を入れたらいいのかな」と指摘される。
+
+**v0.13.30 の誤発火を回避する設計**：
+- v0.13.30 は「`onresult` が N 秒来なかったら stop()」だった。これは喋り中も
+  Web Speech の interim 更新が空く瞬間（特に難語・ネットワーク遅延・エンジン
+  の間欠動作）で誤発火する仕様上の限界があった
+- v0.13.31 は **interim 文字列の中身を比較**：「同じ interim のまま N 秒」を
+  本当の無音と判定。Web Speech が interim を更新し続ける限り（喋り中）は
+  state.lastInterimText が変わるのでタイマーがリセット＝誤発火しない
+
+**実装**：
+
+```js
+// onresult 内（既存処理の最後に追加）
+if (interim && interim !== state.lastInterimText) {
+  state.lastInterimText = interim;
+  resetWebSpeechSilenceStopTimer();  // 中身が変化＝喋り中。タイマー貼り直し
+}
+if (gotFinal) {
+  state.lastInterimText = '';
+  stopWebSpeechSilenceStopTimer();   // 次の発話を待つ
+}
+
+// タイマー発火時
+if (state.lastInterimText && state.recognition) {
+  state.recognition.stop();  // 中身が固まった＝本当に止まった → final 化
+}
+```
+
+**設定 UI**：number-stepper（min=0、max=10、既定 3、0=OFF）。
+design-system 準拠（前回の number input 直書き事故を反省）。
+
+**関連メモ：AI 整形は別問題**：
+やっさんから「自動文字起こし整形のトグルを ON にしてるけど動かない」と報告。
+調査の結果、原因は `resetSilenceTimer` が `onresult` のたびリセットされるため、
+**喋り通すと `silenceSec`（既定 3 秒）が経過せず `flushPendingToGemini` が走らない**仕様。
+やっさん自身が「あ、しゃべり通してるからgeminiに送られないのか」と気付いた。
+バグではない。改善するなら「N 秒 or M 字で強制整形」を別途実装する必要あり（要相談）。
 
 ---
 

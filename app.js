@@ -146,6 +146,11 @@ const DEFAULT_SETTINGS = {
   // やっさんの当初の発言「バッファしながら指定文字数で改行 改行した時点で字幕を更新」
   // を文字通り実装したもの。v0.13.30 の「stop()で final 化」誤翻訳の正しいやり直し。
   webspeechSliceChars: 30,
+  // v0.13.31: 無音 stop。interim の中身が変化していない時間が N 秒続いたら stop() で強制 final 化。
+  // 30 字未満で喋り終わった時、字幕に流れるまでの待ち時間を短縮するため。
+  // v0.13.30 の誤発火（onresult タイミング判定）を、interim 中身比較で回避した改良版。
+  // 0=OFF、min=0、max=10、既定 3 秒。
+  webspeechSilenceStopSec: 3,
 };
 // v0.13.24: WEB_SPEECH_DEFAULTS（v0.13.9 「Web Speech 設定をデフォルトに戻す」
 // ボタン用のリセット値）は UI 撤去済み（v0.13.23）に伴い削除。
@@ -266,6 +271,13 @@ const state = {
   // 1 つの認識単位（result index）の中で「すでに段落として流した文字数」。
   // final 到来時 / 録音停止 / onend で 0 にリセット。
   interimSliceOffset: 0,
+
+  // v0.13.31 (Step4): 「無音 stop」用。interim の中身が変化していない時間が
+  // N 秒続いたら recognition.stop() で強制 final 化＝字幕に流す。
+  // v0.13.30 の誤発火（onresult 来ない時間ベース判定）の改良版で、
+  // 「interim 文字列の中身を比較して、変化していない＝本当に止まっている」を判定。
+  lastInterimText: '',
+  webspeechSilenceStopTimer: null,
 };
 
 /**
@@ -368,6 +380,7 @@ const els = {
   // HTML から削除済み（v0.13.23）+ 機能本体撤去（v0.13.24）に伴い不要。
   inputWsCommitSec: document.getElementById('input-webspeech-commit-sec'),
   inputWsSliceChars: document.getElementById('input-webspeech-slice-chars'),
+  inputWsSilenceStopSec: document.getElementById('input-webspeech-silence-stop-sec'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
   zoomPercent: document.getElementById('zoom-percent'),
@@ -583,6 +596,38 @@ function stopWebSpeechCommitTimer() {
   if (state.webspeechCommitTimer) {
     clearInterval(state.webspeechCommitTimer);
     state.webspeechCommitTimer = null;
+  }
+}
+
+/* ───────── Web Speech 無音 stop タイマー (v0.13.31) ─────────
+ * onresult 内で「interim の中身が変化したとき」だけリセット&セット。
+ * 同じ interim のまま N 秒経つ＝本当に喋りが止まっている＝stop() で final 化。
+ * 30 字 slice に達しない短い発話を、6 秒（webspeechCommitSec）待たずに字幕へ流す。
+ * v0.13.30 の「onresult が N 秒来なかったら判定」は誤発火多発で revert。
+ * 今回は中身比較なので、Web Speech が interim を更新中（喋り中）は誤発火しない。
+ */
+function resetWebSpeechSilenceStopTimer() {
+  stopWebSpeechSilenceStopTimer();
+  const sec = Number(state.settings.webspeechSilenceStopSec || 0);
+  if (sec <= 0) return;
+  state.webspeechSilenceStopTimer = setTimeout(() => {
+    state.webspeechSilenceStopTimer = null;
+    if (!state.isRecording) return;
+    if (state.settings.inputMode !== 'web-speech') return;
+    if (!state.recognition) return;
+    if (!state.lastInterimText) return; // 既に final 済みなら何もしない
+    try {
+      state.recognition.stop();
+      diagLog.info(`Web Speech 無音 stop (${sec}秒、interim ${state.lastInterimText.length}字)`);
+    } catch (e) {
+      console.warn('webspeech silence stop failed', e);
+    }
+  }, sec * 1000);
+}
+function stopWebSpeechSilenceStopTimer() {
+  if (state.webspeechSilenceStopTimer) {
+    clearTimeout(state.webspeechSilenceStopTimer);
+    state.webspeechSilenceStopTimer = null;
   }
 }
 
@@ -1156,6 +1201,19 @@ function buildRecognition() {
         hideSilenceDialog();
       }
     }
+    // v0.13.31: 無音 stop。interim の「中身」が変化したときだけタイマーをリセット&セット。
+    // 同じ interim のまま N 秒 = 本当に喋りが止まっている → stop() で final 化。
+    // v0.13.30 の「onresult タイミング判定」は喋り中も onresult が空く瞬間があって誤発火していた。
+    // 中身比較なら Web Speech が interim を更新し続ける限り（喋り中）は誤発火しない。
+    if (interim && interim !== state.lastInterimText) {
+      state.lastInterimText = interim;
+      resetWebSpeechSilenceStopTimer();
+    }
+    if (gotFinal) {
+      // final が来たら interim 文字列はリセット。次の発話を待つためタイマーも停止。
+      state.lastInterimText = '';
+      stopWebSpeechSilenceStopTimer();
+    }
   };
 
   rec.onerror = (event) => {
@@ -1188,6 +1246,9 @@ function buildRecognition() {
     // network エラー等で onend が走った時、再 start 後の result index は新しいので
     // 古いオフセットを残すと slice が壊れる。
     state.interimSliceOffset = 0;
+    // v0.13.31: 無音 stop タイマーと比較バッファもリセット。
+    state.lastInterimText = '';
+    stopWebSpeechSilenceStopTimer();
     if (state.shouldAutoRestart && state.isRecording) {
       // 即再start()は失敗しやすいので、少し遅延してからリトライ
       const tryRestart = (attempt = 0) => {
@@ -1308,6 +1369,9 @@ function stopRecording() {
   } else {
     // v0.13.14: 強制 commit タイマーを止めてから recognition を止める
     stopWebSpeechCommitTimer();
+    // v0.13.31: 無音 stop タイマーも停止
+    stopWebSpeechSilenceStopTimer();
+    state.lastInterimText = '';
     if (state.recognition) {
       try { state.recognition.stop(); } catch {}
     }
@@ -3717,6 +3781,13 @@ function openSettings() {
     els.inputWsSliceChars.value = String(v);
     state.settings.webspeechSliceChars = v;
   }
+  if (els.inputWsSilenceStopSec) {
+    // v0.13.31: 無音 stop 秒数。number input（0〜10、0=OFF）。範囲外は既定 3。
+    let v = Number(state.settings.webspeechSilenceStopSec ?? 3);
+    if (!Number.isFinite(v) || v < 0 || v > 10) v = 3;
+    els.inputWsSilenceStopSec.value = String(v);
+    state.settings.webspeechSilenceStopSec = v;
+  }
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   applyWebSpeechOnlyVisibility(/* animated */ false);
@@ -3765,6 +3836,11 @@ function saveSettingsFromForm() {
     // v0.13.31: 改行文字数。10〜100 にクランプ。設定変更は次の onresult から効くので即時反映処理は不要。
     const newN = Math.max(10, Math.min(100, Number(els.inputWsSliceChars.value) || 30));
     state.settings.webspeechSliceChars = newN;
+  }
+  if (els.inputWsSilenceStopSec) {
+    // v0.13.31: 無音 stop 秒数。0〜10 にクランプ。次の onresult からタイマーが新しい値で動くので即時反映処理は不要。
+    const newSec = Math.max(0, Math.min(10, Number(els.inputWsSilenceStopSec.value) || 0));
+    state.settings.webspeechSilenceStopSec = newSec;
   }
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));

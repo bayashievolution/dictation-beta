@@ -371,6 +371,23 @@
                 </div>
                 <small class="field-hint">interim が指定文字数に達した時点で改行（新段落として字幕に流す）。Web Speech は止めないので、ブロック間の言葉が失われない。話者のリズム・読みやすさで調整（既定 30）。</small>
               </label>
+
+              <!-- v0.13.31: 無音 stop。30 字に達しない短い発話を、
+                   既存の時間ベース 6 秒を待たずに字幕へ流すための補完。
+                   interim の「中身」が変化していない時間で判定するので、
+                   v0.13.30 の誤発火（喋り中も onresult が空く問題）は起きない。
+                   0=OFF。 -->
+              <label class="field">
+                <span class="field-label">Web Speech 無音 stop（秒、0=OFF）</span>
+                <div class="number-stepper">
+                  <input type="number" id="input-webspeech-silence-stop-sec" min="0" max="10" step="1" value="3">
+                  <div class="number-stepper-btns">
+                    <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-silence-stop-sec" data-stepper-delta="1" tabindex="-1" title="増やす"><span data-icon="chevron-up"></span></button>
+                    <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-silence-stop-sec" data-stepper-delta="-1" tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
+                  </div>
+                </div>
+                <small class="field-hint">interim の中身が N 秒変化しなかったら（=本当に喋りが止まったら）強制 final 化して字幕に流す。改行文字数に達しない短い発話の取りこぼし防止。0 で OFF。</small>
+              </label>
             </div>
           </div>
           <div class="field-conditional is-hidden" id="gemini-only-fields">
