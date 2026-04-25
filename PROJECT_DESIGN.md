@@ -286,6 +286,61 @@ Chrome では `zoom` / `transform: scale` は**視覚のみ**スケールする�
 - 要約: セッション停止時に Gemini で自動生成＋手動「再生成」ボタン
 - JSON保存／読み込み: セッション単位で `{transcript, memo, summary}` を往復可能
 
+### 2026-04-26 v0.13.31 design-system を読まずに number input を入れた事故
+
+v0.13.31 の設定 UI として `<input type="number">` を素のまま追加。
+スピナー（↑↓）がネイティブ装飾のまま出てしまい、やっさんから
+
+> もーこれも何度も何度も言ってるけど！こういう↑↓とかのデザインは統一して！
+> デザイン.mdに書いてあるはず！
+
+と指摘される。**「何度も何度も」= 私が過去に同じ指摘を受けて記録しなかった証拠**。
+ルール11違反の典型例。ここに書く。
+
+**該当のデザインルール**（`~/manage/design-system/principles.md` line 96-106）：
+
+> ネイティブブラウザスタイル（白い select、青い input border）は**必ず塗り替える**。
+> - ネイティブ装飾（`select` の矢印 / number スピナー）は `appearance: none` で消して、SVG で自作
+> - やってはダメ：`<input type=number>` のスピナー放置 → 汎用スタイルで浮く
+
+**この dictation-beta に既にある汎用部品**：
+- `style.css:1322-1418` `.number-stepper` クラス
+- `style.css:1325-1335` `.field > .number-stepper:not(.number-stepper--compact)` で field 内 full-width 版
+- `app.js:2834-2855` `wireNumberSteppers()` が `[data-stepper-target]` `[data-stepper-delta]` 属性で汎用クリックハンドラを wire（min/max/step を読んで input.value を更新、change/input イベント発火）
+
+**正しい HTML 構造**：
+
+```html
+<div class="number-stepper">
+  <input type="number" id="..." min="..." max="..." step="1" value="...">
+  <div class="number-stepper-btns">
+    <button class="number-stepper-btn" type="button"
+            data-stepper-target="..." data-stepper-delta="1"
+            tabindex="-1" title="増やす"><span data-icon="chevron-up"></span></button>
+    <button class="number-stepper-btn" type="button"
+            data-stepper-target="..." data-stepper-delta="-1"
+            tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
+  </div>
+</div>
+```
+
+**次の私への警告（最重要）**：
+
+⚠️ **index.html / style.css / app.js で UI を新規追加・編集する前に、必ず以下を読む**：
+
+1. `~/manage/design-system/README.md`
+2. `~/manage/design-system/principles.md`
+3. 必要に応じて `themes.md` / `layout.md` / `animations.md` / `components/*.md`
+
+CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてあるが、私は v0.13.31 で守らなかった。
+**このプロジェクトでは UI 触る前に design-system を読むのが必須**。守らないとやっさんから
+「何度も言ってる」指摘が飛ぶ＝私の事故＝やっさんの仕事の肩代わり。
+
+加えて、**新規入力 UI を入れる前に既存コードで似た部品（`.number-stepper` 等）を grep して
+流用を最優先**。design-system に書いてある「**類似の UI は同じクラスを振る**」（principles.md L195）。
+
+---
+
 ### 2026-04-26 v0.13.31 真の「改行」方式（やり直し実装）
 
 v0.13.30 自滅事故の後の正しい実装。**stop() を呼ばない**が大前提。

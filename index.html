@@ -357,10 +357,18 @@
               <!-- v0.13.31: 真の「改行」方式。recognition.stop() を呼ばずに、
                    interim を N 字単位にカットして新段落として字幕／オーバーレイに流す。
                    stop しない＝Web Speech は走り続ける＝ブロック間の言葉が失われない。
-                   v0.13.30 の「stop で final 化」誤翻訳のやり直し。 -->
+                   v0.13.30 の「stop で final 化」誤翻訳のやり直し。
+                   ↑↓ は design-system principles.md「ネイティブ装飾は appearance:none」に従い、
+                   汎用 .number-stepper（wireNumberSteppers）を使う。 -->
               <label class="field">
                 <span class="field-label">Web Speech 改行文字数（10〜100）</span>
-                <input type="number" id="input-webspeech-slice-chars" min="10" max="100" step="1" value="30">
+                <div class="number-stepper">
+                  <input type="number" id="input-webspeech-slice-chars" min="10" max="100" step="1" value="30">
+                  <div class="number-stepper-btns">
+                    <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-slice-chars" data-stepper-delta="1" tabindex="-1" title="増やす"><span data-icon="chevron-up"></span></button>
+                    <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-slice-chars" data-stepper-delta="-1" tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
+                  </div>
+                </div>
                 <small class="field-hint">interim が指定文字数に達した時点で改行（新段落として字幕に流す）。Web Speech は止めないので、ブロック間の言葉が失われない。話者のリズム・読みやすさで調整（既定 30）。</small>
               </label>
             </div>
