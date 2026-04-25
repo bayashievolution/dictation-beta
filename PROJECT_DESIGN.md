@@ -342,6 +342,33 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 ---
 
+### 2026-04-26 v0.13.31 オーバーレイ背景の角丸（borderRadius）設定追加
+
+やっさん発「オーバーレイの背景の角丸のアールを変更可能に」。
+
+**dictation-beta 側の対応**：
+- captions.html の「背景色」直下に「角丸」range スライダー（min=0, max=32, step=1, 既定 8）追加
+- captions.js: `borderRadius` を DEFAULT_SETTINGS に追加（既定 8）、els 参照、bind、`buildOverlaySettings()` で送信ペイロードに含める
+- 旧 overlay は未知フィールドを無視するので、送って害なし
+  （NATIVE_MESSAGING_SPEC §4.2 settings は任意フィールド）
+
+**dictation-overlay 側の対応**：別プロジェクトなので CLAUDE.md ルール通り Notion 掲示板に依頼を投稿
+（[\\[依頼\\] オーバーレイ背景の角丸](https://www.notion.so/34d980e4ee138198a2b3e501f696ec50) 起票済み）。
+
+実装イメージ（overlay 側）：
+```css
+.caption {
+  border-radius: var(--cap-border-radius, 8px);
+}
+```
+
+overlay 側 v0.4 以降で対応予定。それまではオーバーレイ表示は 8px のまま、設定値は localStorage に保存される（後で効くようになる）。
+
+⚠️ ライブキャプションウィンドウ廃止の方針があるので、この UI も最終的にはメイン
+画面の設定モーダルに移植される（廃止作業時に実施）。
+
+---
+
 ### 2026-04-26 v0.13.31 字幕スクロール演出 + 表示モード非表示
 
 **やっさん発の要望**：

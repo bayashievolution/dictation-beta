@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS = {
   shadowOn: true,
   shadowColor: '#000000',
   shadowBlur: 6,
+  // v0.13.31: オーバーレイ背景の角丸（px）。0=直角〜32=丸め強。dictation-overlay v0.4+ で反映予定。
+  borderRadius: 8,
   lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため）
   paraCount: 2,
   // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
@@ -130,6 +132,8 @@ const els = {
   inShadowColor: document.getElementById('cap-shadow-color'),
   inShadowBlur: document.getElementById('cap-shadow-blur'),
   outShadowBlur: document.getElementById('cap-shadow-blur-out'),
+  inBorderRadius: document.getElementById('cap-border-radius'),
+  outBorderRadius: document.getElementById('cap-border-radius-out'),
   inLineHeight: document.getElementById('cap-line-height'),
   outLineHeight: document.getElementById('cap-lh-out'),
   inParaCount: document.getElementById('cap-para-count'),
@@ -279,6 +283,14 @@ function reflectSettingsToUI() {
   els.inShadowColor.value = settings.shadowColor;
   els.inShadowBlur.value = settings.shadowBlur;
   els.outShadowBlur.textContent = settings.shadowBlur + 'px';
+  if (els.inBorderRadius) {
+    // v0.13.31: 範囲外（0〜32）の旧値は既定 8 にフォールバック
+    let v = Number(settings.borderRadius ?? 8);
+    if (!Number.isFinite(v) || v < 0 || v > 32) v = 8;
+    els.inBorderRadius.value = String(v);
+    els.outBorderRadius.textContent = v + 'px';
+    settings.borderRadius = v;
+  }
   els.inLineHeight.value = settings.lineHeightTenth;
   els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
   els.inParaCount.value = String(settings.paraCount);
@@ -531,6 +543,15 @@ function bindSettingsUI() {
     els.outShadowBlur.textContent = settings.shadowBlur + 'px';
     commit();
   });
+  if (els.inBorderRadius) {
+    els.inBorderRadius.addEventListener('input', () => {
+      // v0.13.31: 角丸（px）。0〜32 にクランプ。dictation-overlay 側に Native Messaging で送信。
+      const v = Math.max(0, Math.min(32, Number(els.inBorderRadius.value) || 0));
+      settings.borderRadius = v;
+      els.outBorderRadius.textContent = v + 'px';
+      commit();
+    });
+  }
   els.inLineHeight.addEventListener('input', () => {
     settings.lineHeightTenth = Number(els.inLineHeight.value);
     els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
@@ -1220,6 +1241,9 @@ function buildOverlaySettings() {
     strokeColor: settings.strokeColor,
     strokeWidth: Number(settings.strokeWidth) || 2,
     lineHeightTenth: Number(settings.lineHeightTenth) || 14,
+    // v0.13.31: 角丸（px、0〜32）。dictation-overlay 側 v0.4+ で .caption の border-radius に反映予定。
+    // 旧 overlay は未知フィールドを無視するので送って害なし（NATIVE_MESSAGING_SPEC §4.2 settings は任意）。
+    borderRadius: Math.max(0, Math.min(32, Number(settings.borderRadius) || 0)),
   };
 }
 

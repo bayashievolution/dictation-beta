@@ -93,6 +93,13 @@
         </div>
       </div>
 
+      <!-- v0.13.31: オーバーレイ背景の角丸（border-radius）。0=直角〜32px=丸め強。 -->
+      <div class="cap-field">
+        <label class="cap-label">角丸 <output id="cap-border-radius-out">8px</output></label>
+        <input type="range" id="cap-border-radius" min="0" max="32" step="1" value="8" />
+        <small class="cap-hint">オーバーレイ背景の角の丸み（dictation-overlay 側 v0.4 以降で反映）。</small>
+      </div>
+
       <div class="cap-field">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-stroke-on" />
