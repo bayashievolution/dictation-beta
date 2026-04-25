@@ -141,6 +141,12 @@ const DEFAULT_SETTINGS = {
   //   児童のゆっくりめ発表なら 8〜10、早口の長文なら 3〜4 が適。
   //   既定 6 は「最初に試す値」程度の位置付け（CLAUDE.md ルール11、2回目の説明）。
   webspeechCommitSec: 6,
+  // v0.13.30: Web Speech 文字数 commit。interim 長が指定文字数を超えたら強制 final 化。
+  // 0=OFF、25/30/40 字。既定 30。早口で長文化する前に細かく区切る。
+  webspeechCommitChars: 30,
+  // v0.13.30: Web Speech 無音 commit。onresult が指定秒数来なかったら強制 final 化。
+  // 0=OFF、2/3/4 秒。既定 3。発話の自然な切れ目で段落分け。
+  webspeechCommitSilenceSec: 3,
 };
 // v0.13.24: WEB_SPEECH_DEFAULTS（v0.13.9 「Web Speech 設定をデフォルトに戻す」
 // ボタン用のリセット値）は UI 撤去済み（v0.13.23）に伴い削除。
@@ -256,6 +262,14 @@ const state = {
   // 複数タブ選択（Ctrl+クリック=追加/除外、Shift+クリック=範囲選択、一括ドラッグ移動）
   selectedTabIds: new Set(),
   selectionAnchorId: null, // Shift+クリックの基準
+
+  // v0.13.30 Web Speech 文字数 commit のインフライトフラグ。
+  // recognition.stop() 重複呼び出し防止。onend でリセット。
+  webspeechCharCommitInFlight: false,
+
+  // v0.13.30 Web Speech 無音 commit タイマー。
+  // onresult のたびにリセット&セット。N秒間 onresult が来なかったら強制 commit。
+  webspeechSilenceCommitTimer: null,
 };
 
 /**
@@ -357,6 +371,8 @@ const els = {
   // input-webspeech-interim-opacity / btn-webspeech-defaults）への els 参照は削除。
   // HTML から削除済み（v0.13.23）+ 機能本体撤去（v0.13.24）に伴い不要。
   inputWsCommitSec: document.getElementById('input-webspeech-commit-sec'),
+  inputWsCommitChars: document.getElementById('input-webspeech-commit-chars'),
+  inputWsCommitSilence: document.getElementById('input-webspeech-commit-silence'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
   zoomPercent: document.getElementById('zoom-percent'),
@@ -572,6 +588,39 @@ function stopWebSpeechCommitTimer() {
   if (state.webspeechCommitTimer) {
     clearInterval(state.webspeechCommitTimer);
     state.webspeechCommitTimer = null;
+  }
+}
+
+/* ───────── Web Speech 無音 commit タイマー (v0.13.30) ─────────
+ * onresult のたびに resetWebSpeechSilenceCommitTimer() を呼んでリセット&セット。
+ * settings.webspeechCommitSilenceSec 秒間 onresult が来なかったら recognition.stop()
+ * で強制 commit。喋りの自然な切れ目を捉えて段落区切りにするのが狙い。
+ * 既存の時間ベース webspeechCommitSec / 文字数ベース webspeechCommitChars と並列動作。
+ */
+function resetWebSpeechSilenceCommitTimer() {
+  stopWebSpeechSilenceCommitTimer();
+  const sec = Number(state.settings.webspeechCommitSilenceSec || 0);
+  if (sec <= 0) return;
+  state.webspeechSilenceCommitTimer = setTimeout(() => {
+    state.webspeechSilenceCommitTimer = null;
+    if (!state.isRecording) return;
+    if (state.settings.inputMode !== 'web-speech') return;
+    if (!state.recognition) return;
+    if (state.webspeechCharCommitInFlight) return;
+    state.webspeechCharCommitInFlight = true;
+    try {
+      state.recognition.stop();
+      diagLog.info(`Web Speech 強制 commit (無音${sec}秒)`);
+    } catch (e) {
+      state.webspeechCharCommitInFlight = false;
+      console.warn('webspeech silence commit stop failed', e);
+    }
+  }, sec * 1000);
+}
+function stopWebSpeechSilenceCommitTimer() {
+  if (state.webspeechSilenceCommitTimer) {
+    clearTimeout(state.webspeechSilenceCommitTimer);
+    state.webspeechSilenceCommitTimer = null;
   }
 }
 
@@ -1115,6 +1164,31 @@ function buildRecognition() {
       if (els.silenceDialog && !els.silenceDialog.classList.contains('hidden')) {
         hideSilenceDialog();
       }
+      // v0.13.30 Step2: 無音 commit タイマーをリセット&セット。
+      // onresult が一定時間来なくなったら強制 commit。
+      resetWebSpeechSilenceCommitTimer();
+    }
+    // v0.13.30: 文字数ベース commit。interim が閾値を超えたら recognition.stop() で強制 final 化。
+    // 既存の時間ベース webspeechCommitSec / 無音ベース webspeechCommitSilenceSec と並列動作（早く来た方で commit）。
+    // フラグで stop() 重複呼び出しを防ぎ、onend でリセットする。
+    const charLimit = Number(state.settings.webspeechCommitChars || 0);
+    if (
+      charLimit > 0 &&
+      interim.length >= charLimit &&
+      !state.webspeechCharCommitInFlight &&
+      state.recognition
+    ) {
+      state.webspeechCharCommitInFlight = true;
+      try {
+        state.recognition.stop();
+        diagLog.info(`Web Speech 強制 commit (${charLimit}字) interim=${interim.length}`);
+      } catch (e) {
+        state.webspeechCharCommitInFlight = false;
+        console.warn('webspeech char commit stop failed', e);
+      }
+    }
+    if (gotFinal) {
+      state.webspeechCharCommitInFlight = false;
     }
   };
 
@@ -1144,6 +1218,11 @@ function buildRecognition() {
 
   rec.onend = () => {
     els.interim.textContent = '';
+    // v0.13.30 Step1: 文字数 commit のインフライトフラグをリセット。
+    // 再 start 後の新しい認識ループで判定が正しく走るようにする。
+    state.webspeechCharCommitInFlight = false;
+    // v0.13.30 Step2: 無音 commit タイマーも停止。再 start 後の onresult で再セットされる。
+    stopWebSpeechSilenceCommitTimer();
     if (state.shouldAutoRestart && state.isRecording) {
       // 即再start()は失敗しやすいので、少し遅延してからリトライ
       const tryRestart = (attempt = 0) => {
@@ -1264,6 +1343,8 @@ function stopRecording() {
   } else {
     // v0.13.14: 強制 commit タイマーを止めてから recognition を止める
     stopWebSpeechCommitTimer();
+    // v0.13.30 Step2: 無音 commit タイマーも停止
+    stopWebSpeechSilenceCommitTimer();
     if (state.recognition) {
       try { state.recognition.stop(); } catch {}
     }
@@ -3666,6 +3747,20 @@ function openSettings() {
     els.inputWsCommitSec.value = String(v);
     state.settings.webspeechCommitSec = v;
   }
+  if (els.inputWsCommitChars) {
+    // v0.13.30: 文字数 commit 既定 30。範囲外の旧値は 30 にフォールバック。
+    let v = Number(state.settings.webspeechCommitChars ?? 30);
+    if (![0, 25, 30, 40].includes(v)) v = 30;
+    els.inputWsCommitChars.value = String(v);
+    state.settings.webspeechCommitChars = v;
+  }
+  if (els.inputWsCommitSilence) {
+    // v0.13.30: 無音 commit 既定 3 秒。範囲外の旧値は 3 にフォールバック。
+    let v = Number(state.settings.webspeechCommitSilenceSec ?? 3);
+    if (![0, 2, 3, 4].includes(v)) v = 3;
+    els.inputWsCommitSilence.value = String(v);
+    state.settings.webspeechCommitSilenceSec = v;
+  }
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   applyWebSpeechOnlyVisibility(/* animated */ false);
@@ -3709,6 +3804,17 @@ function saveSettingsFromForm() {
       // 録音中なら即時タイマー反映
       if (typeof restartWebSpeechCommitTimer === 'function') restartWebSpeechCommitTimer();
     }
+  }
+  if (els.inputWsCommitChars) {
+    // v0.13.30: 文字数 commit。設定変更は次回 onresult 評価時から効くので即時反映処理は不要。
+    const newChars = Math.max(0, Math.min(200, Number(els.inputWsCommitChars.value) || 0));
+    state.settings.webspeechCommitChars = newChars;
+  }
+  if (els.inputWsCommitSilence) {
+    // v0.13.30: 無音 commit。録音中ならタイマーを次の onresult からリセット&セットされるので
+    // 即時反映処理は不要（次の発話で新しい秒数が適用される）。
+    const newSec = Math.max(0, Math.min(10, Number(els.inputWsCommitSilence.value) || 0));
+    state.settings.webspeechCommitSilenceSec = newSec;
   }
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));
