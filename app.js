@@ -1209,11 +1209,22 @@ async function startGeminiAudioRecording() {
     openSettings();
     return;
   }
-  const constraints = {
-    audio: state.settings.audioDeviceId
-      ? { deviceId: { exact: state.settings.audioDeviceId } }
-      : true,
+  // Gemini Audio は録音生データをそのまま AI に送るルートなので、
+  // Chrome の音声前処理（AGC/NS/EC）はすべて OFF にする。
+  // 特に AGC（autoGainControl）は仮想ケーブル経由の音声で「無音区間」に
+  // 過剰ブーストをかけるため、リアルマイクから漏れる微弱音や室内雑音を
+  // 持ち上げて Gemini が「独り言として」拾ってしまう症状を引き起こす。
+  // （v0.13.6 修正: VB-Cable + YouTube 音声の文字起こしで
+  //  「変えようかな」「もうダメだ」など独り言が混入する事故への対策）
+  const audioOpts = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
   };
+  if (state.settings.audioDeviceId) {
+    audioOpts.deviceId = { exact: state.settings.audioDeviceId };
+  }
+  const constraints = { audio: audioOpts };
   try {
     state.audioStream = await navigator.mediaDevices.getUserMedia(constraints);
   } catch (e) {
