@@ -354,10 +354,15 @@
                 <small class="field-hint">N 秒ごとに「ここまで」と区切って字幕／オーバーレイに送る。話し手のリズムに合わせて調整。長文喋りでドカっと出るのを防ぐ。</small>
               </label>
 
-              <!-- v0.13.23: 旧 v0.13.9 interim ライブ表示 UI（更新間隔・透明度）と
-                   「Web Speech 設定をデフォルトに戻す」ボタンを削除。
-                   v0.13.17 で字幕ウィンドウ側の cap-para-interim を撤去済みで読み手なし。
-                   app.js 側の機能本体（scheduleInterimSync 等）は次回判断。 -->
+              <!-- v0.13.31: 真の「改行」方式。recognition.stop() を呼ばずに、
+                   interim を N 字単位にカットして新段落として字幕／オーバーレイに流す。
+                   stop しない＝Web Speech は走り続ける＝ブロック間の言葉が失われない。
+                   v0.13.30 の「stop で final 化」誤翻訳のやり直し。 -->
+              <label class="field">
+                <span class="field-label">Web Speech 改行文字数（10〜100）</span>
+                <input type="number" id="input-webspeech-slice-chars" min="10" max="100" step="1" value="30">
+                <small class="field-hint">interim が指定文字数に達した時点で改行（新段落として字幕に流す）。Web Speech は止めないので、ブロック間の言葉が失われない。話者のリズム・読みやすさで調整（既定 30）。</small>
+              </label>
             </div>
           </div>
           <div class="field-conditional is-hidden" id="gemini-only-fields">

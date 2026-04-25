@@ -141,6 +141,11 @@ const DEFAULT_SETTINGS = {
   //   児童のゆっくりめ発表なら 8〜10、早口の長文なら 3〜4 が適。
   //   既定 6 は「最初に試す値」程度の位置付け（CLAUDE.md ルール11、2回目の説明）。
   webspeechCommitSec: 6,
+  // v0.13.31: 真の「改行」方式。interim を N 字単位にカットして新段落として流す。
+  // recognition.stop() は呼ばない（言葉抜けゼロ）。0=OFF / 25 / 30 / 40。既定 30。
+  // やっさんの当初の発言「バッファしながら指定文字数で改行 改行した時点で字幕を更新」
+  // を文字通り実装したもの。v0.13.30 の「stop()で final 化」誤翻訳の正しいやり直し。
+  webspeechSliceChars: 30,
 };
 // v0.13.24: WEB_SPEECH_DEFAULTS（v0.13.9 「Web Speech 設定をデフォルトに戻す」
 // ボタン用のリセット値）は UI 撤去済み（v0.13.23）に伴い削除。
@@ -256,6 +261,11 @@ const state = {
   // 複数タブ選択（Ctrl+クリック=追加/除外、Shift+クリック=範囲選択、一括ドラッグ移動）
   selectedTabIds: new Set(),
   selectionAnchorId: null, // Shift+クリックの基準
+
+  // v0.13.31: Web Speech interim slice（真の「改行」方式）の累積オフセット。
+  // 1 つの認識単位（result index）の中で「すでに段落として流した文字数」。
+  // final 到来時 / 録音停止 / onend で 0 にリセット。
+  interimSliceOffset: 0,
 };
 
 /**
@@ -357,6 +367,7 @@ const els = {
   // input-webspeech-interim-opacity / btn-webspeech-defaults）への els 参照は削除。
   // HTML から削除済み（v0.13.23）+ 機能本体撤去（v0.13.24）に伴い不要。
   inputWsCommitSec: document.getElementById('input-webspeech-commit-sec'),
+  inputWsSliceChars: document.getElementById('input-webspeech-slice-chars'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
   zoomPercent: document.getElementById('zoom-percent'),
@@ -1088,24 +1099,53 @@ function buildRecognition() {
   rec.onstart = () => setStatus('listening', '録音中');
 
   rec.onresult = (event) => {
+    // v0.13.31: 真の「改行」方式 = recognition.stop() を呼ばずに、interim を
+    // 自前で N 字単位にカットして transcript に新段落として流す。
+    // やっさんが解決したい問題：「stop()→再start のラグでブロック間の言葉が失われる」
+    // → stop() を呼ばないことが大前提（v0.13.30 自滅事故の本質）。
+    // sliceN = 0 のときは旧来の動作（final が来てから appendRawChunk）。
+    const sliceN = Number(state.settings.webspeechSliceChars || 0);
     let interim = '';
     let gotFinal = false;
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
       const text = result[0].transcript;
       if (result.isFinal) {
-        appendRawChunk(text);
+        // この result 内で interim slice として既に流した分（offset）を差し引く。
+        // 残り（offset 以降）だけを最後の段落として transcript に追加。
+        const offset = state.interimSliceOffset || 0;
+        const remaining = offset > 0 ? text.slice(offset) : text;
+        if (remaining) appendRawChunk(remaining);
+        state.interimSliceOffset = 0; // 次の result の頭から数え直す
         gotFinal = true;
       } else {
         interim += text;
+        // interim slice：N 字超えごとに新段落として appendRawChunk。
+        // stop() は呼ばない＝Web Speech は走り続ける＝言葉抜けゼロ。
+        if (sliceN > 0) {
+          let cursor = state.interimSliceOffset || 0;
+          while (text.length - cursor >= sliceN) {
+            const chunk = text.slice(cursor, cursor + sliceN);
+            appendRawChunk(chunk);
+            cursor += sliceN;
+            diagLog.info(`Web Speech 改行 (${sliceN}字 interim slice)`);
+          }
+          state.interimSliceOffset = cursor;
+        }
       }
     }
+    // 文字起こしペインの interim 表示は、既に段落として流した分（offset）を
+    // 差し引いた残りだけ表示する（重複表示を防ぐ）。
+    const offsetForDisplay = state.interimSliceOffset || 0;
+    const interimForDisplay = offsetForDisplay > 0 && interim.length >= offsetForDisplay
+      ? interim.slice(offsetForDisplay)
+      : interim;
     // BG録音中（録音対象セッションが非表示）は共有の#interimに書かない。
     // 書くと別セッション（表示中のタブ）の文字起こしエリアに漏れて見える。
     if (isBgRecording()) {
       els.interim.textContent = '';
     } else {
-      els.interim.textContent = interim;
+      els.interim.textContent = interimForDisplay;
       if (interim || gotFinal) hideEmptyHint();
       if (gotFinal || interim) autoScroll();
     }
@@ -1144,6 +1184,10 @@ function buildRecognition() {
 
   rec.onend = () => {
     els.interim.textContent = '';
+    // v0.13.31: interim slice オフセットを 0 リセット。
+    // network エラー等で onend が走った時、再 start 後の result index は新しいので
+    // 古いオフセットを残すと slice が壊れる。
+    state.interimSliceOffset = 0;
     if (state.shouldAutoRestart && state.isRecording) {
       // 即再start()は失敗しやすいので、少し遅延してからリトライ
       const tryRestart = (attempt = 0) => {
@@ -3666,6 +3710,13 @@ function openSettings() {
     els.inputWsCommitSec.value = String(v);
     state.settings.webspeechCommitSec = v;
   }
+  if (els.inputWsSliceChars) {
+    // v0.13.31: 改行文字数。number input（10〜100）。範囲外は既定 30 にクランプ。
+    let v = Number(state.settings.webspeechSliceChars ?? 30);
+    if (!Number.isFinite(v) || v < 10 || v > 100) v = 30;
+    els.inputWsSliceChars.value = String(v);
+    state.settings.webspeechSliceChars = v;
+  }
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   applyWebSpeechOnlyVisibility(/* animated */ false);
@@ -3709,6 +3760,11 @@ function saveSettingsFromForm() {
       // 録音中なら即時タイマー反映
       if (typeof restartWebSpeechCommitTimer === 'function') restartWebSpeechCommitTimer();
     }
+  }
+  if (els.inputWsSliceChars) {
+    // v0.13.31: 改行文字数。10〜100 にクランプ。設定変更は次の onresult から効くので即時反映処理は不要。
+    const newN = Math.max(10, Math.min(100, Number(els.inputWsSliceChars.value) || 30));
+    state.settings.webspeechSliceChars = newN;
   }
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));

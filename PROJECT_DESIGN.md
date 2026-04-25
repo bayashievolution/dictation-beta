@@ -4,15 +4,17 @@
 
 ---
 
-## 📌 次セッションのカルディ２へ（2026-04-26 引継ぎ・最終 v0.13.29）
+## 📌 次セッションのカルディ２へ（2026-04-26 引継ぎ・最終 v0.13.31）
 
 **このセクションを最優先で読む。コードを編集する前に試行錯誤ログ全体に目を通すこと。**
 
 ### 現状サマリ
 
-- **dictation-beta v0.13.29**：Web Speech モードで Gemini Audio に近い「ちょうどいい塊感」の字幕体験を達成済み
+- **dictation-beta v0.13.31**：真の「改行」方式（stop しない interim slice）を実装。**ブロック間の言葉抜けゼロ**を達成（v0.13.30 の自滅事故からのやり直し）
 - **dictation-overlay v0.3.4** との Native Messaging 連携も動作中（OS レベル透過字幕オーバーレイ）
-- **主要設定**：「Web Speech チャンク間隔（秒）」セレクト（OFF / 6（既定）/ 8 / 10）
+- **主要設定**：
+  - 「Web Speech チャンク間隔（秒）」セレクト（OFF / 6（既定）/ 8 / 10）：時間ベース強制 commit、stop() を呼ぶ。**残置（既存挙動を壊さないため）**
+  - 「Web Speech 改行文字数（10〜100）」number input（既定 30）：interim を N 字単位で改行＝新段落として字幕に流す。**stop() を呼ばない＝言葉抜けゼロ**
 
 ### 今日（2026-04-26）の作業の軌跡
 
@@ -27,6 +29,7 @@
 | v0.13.28 | 録音停止中に無音ダイアログ出るバグ修正 |
 | v0.13.29 | チャンク間隔セレクトの空欄表示バグ（localStorage マイグレーション漏れ）修正 |
 | v0.13.30 | **自滅事故**：「改行」をやっさんが言ったのに私が「final 化（recognition.stop）」と単語マッチで誤翻訳して実装。**同 commit を git revert で打ち消し**（v0.13.31）。事故の本質は「やっさんの問題提起の文脈を切り捨て、自分の実装都合で目的を歪めた」こと。試行錯誤ログ「v0.13.30 自滅事故」セクション参照 |
+| v0.13.31 | **真の「改行」方式**を実装。recognition.stop() を呼ばず、interim を N 字単位にカットして appendRawChunk で新段落として transcript に流す方式。stop しない＝Web Speech は走り続ける＝**ブロック間の言葉抜けゼロ**。number input 10〜100、既定 30 |
 
 ### 直近の重要な学び（試行錯誤ログ参照、決して破ってはいけない）
 
@@ -282,6 +285,57 @@ Chrome では `zoom` / `transform: scale` は**視覚のみ**スケールする�
 - メモ: 自由記述（contenteditable）
 - 要約: セッション停止時に Gemini で自動生成＋手動「再生成」ボタン
 - JSON保存／読み込み: セッション単位で `{transcript, memo, summary}` を往復可能
+
+### 2026-04-26 v0.13.31 真の「改行」方式（やり直し実装）
+
+v0.13.30 自滅事故の後の正しい実装。**stop() を呼ばない**が大前提。
+
+**実装の核**（app.js `rec.onresult` 内）：
+
+```js
+const sliceN = state.settings.webspeechSliceChars;  // 既定 30、10〜100
+let interim = '';
+for (let i = event.resultIndex; i < event.results.length; i++) {
+  const result = event.results[i];
+  const text = result[0].transcript;
+  if (result.isFinal) {
+    // すでに interim slice として流した分（offset）を差し引く
+    const offset = state.interimSliceOffset || 0;
+    const remaining = offset > 0 ? text.slice(offset) : text;
+    if (remaining) appendRawChunk(remaining);
+    state.interimSliceOffset = 0;  // 次の result の頭から数え直す
+  } else {
+    interim += text;
+    if (sliceN > 0) {
+      let cursor = state.interimSliceOffset || 0;
+      while (text.length - cursor >= sliceN) {
+        appendRawChunk(text.slice(cursor, cursor + sliceN));
+        cursor += sliceN;
+      }
+      state.interimSliceOffset = cursor;
+    }
+  }
+}
+// 文字起こしペインの interim 表示も offset 分は差し引く（重複表示防止）
+els.interim.textContent = interim.slice(state.interimSliceOffset || 0);
+```
+
+**なぜ言葉抜けゼロか**：
+- `recognition.stop()` を一切呼ばない。Web Speech は continuous で走り続ける
+- 「改行」は localStorage 上で transcript に新段落を追記するだけ＝**Web Speech の認識処理を中断しない**
+- v0.13.30 で起きていた「stop() → onend → 自動再start のラグ」が発生しない
+
+**設定 UI**：number input（10〜100、既定 30）。
+やっさん発「自由に数値で入れられるようにしよう 10〜100」（select の選択肢では話者リズムに細かく追従できないため）。
+
+**onend で offset リセット**：network エラー等で再 start する場合、新しい認識ループの result index は新しいので、古い offset を持ち越すと slice が壊れる。onend で必ず 0 リセット。
+
+**役割分担**：
+- 「Web Speech チャンク間隔（秒）」（既存）= 時間ベース強制 commit、**stop() を呼ぶ**（言葉抜けあり、ただし長文ドカ防止には有効）
+- 「Web Speech 改行文字数」（新規）= 文字数ベース改行、**stop() を呼ばない**（言葉抜けゼロ、自然な細切れ）
+- 両者は並列で動作。やっさんは状況で使い分け or 片方 OFF。
+
+---
 
 ### 2026-04-26 v0.13.30 自滅事故・revert（次の私への警告）
 
@@ -617,3 +671,4 @@ API コストをかけない方向で字幕体験を Gemini Audio に近づけ�
 - 2026-04-21 (v0.6): 質問タブ（NotebookLM風）、タブのドラッグ並替、Word風フォントコントロール各ペイン独立
 - 2026-04-21 (v0.7): **Chrome拡張（サイドパネル）化**。manifest v3、background service worker、サイドパネル常時表示で講義スライドと並べて使える
 - 2026-04-25〜26 (v0.13.x): dictation-overlay 連携・Web Speech 字幕系編集・自滅事故（上記反省会セクション参照）
+- 2026-04-26 (v0.13.30→31): v0.13.30「文字数 commit／無音 commit（recognition.stop で final 化）」を自滅事故として revert、v0.13.31 で真の「改行」方式（stop しない interim slice）に作り直し
