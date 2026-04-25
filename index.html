@@ -354,31 +354,10 @@
                 <small class="field-hint">N 秒ごとに「ここまで」と区切って字幕／オーバーレイに送る。話し手のリズムに合わせて調整。長文喋りでドカっと出るのを防ぐ。</small>
               </label>
 
-              <!-- v0.13.30: 文字数ベース commit。interim が指定文字数を超えたら強制 final 化。
-                   早口で長文化する前に切れるので、上の「秒」設定と並列で動かして早く来た方で commit。 -->
-              <label class="field">
-                <span class="field-label">Web Speech チャンク文字数</span>
-                <select id="input-webspeech-commit-chars">
-                  <option value="0">OFF</option>
-                  <option value="25">25</option>
-                  <option value="30" selected>30（既定）</option>
-                  <option value="40">40</option>
-                </select>
-                <small class="field-hint">未確定テキストが指定文字数に達した時点で「ここまで」と区切る。長文化前に細かく流したいとき。</small>
-              </label>
-
-              <!-- v0.13.30: 無音ベース commit。onresult が一定時間来なかったら強制 final 化。
-                   発話の自然な切れ目で段落が切れるので、字幕のぶつ切り感が減る。 -->
-              <label class="field">
-                <span class="field-label">Web Speech 無音 commit（秒）</span>
-                <select id="input-webspeech-commit-silence">
-                  <option value="0">OFF</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3（既定）</option>
-                  <option value="4">4</option>
-                </select>
-                <small class="field-hint">N 秒間 認識結果が更新されなかったら「ここまで」と区切る。喋りの切れ目で自然に段落分け。</small>
-              </label>
+              <!-- v0.13.23: 旧 v0.13.9 interim ライブ表示 UI（更新間隔・透明度）と
+                   「Web Speech 設定をデフォルトに戻す」ボタンを削除。
+                   v0.13.17 で字幕ウィンドウ側の cap-para-interim を撤去済みで読み手なし。
+                   app.js 側の機能本体（scheduleInterimSync 等）は次回判断。 -->
             </div>
           </div>
           <div class="field-conditional is-hidden" id="gemini-only-fields">
