@@ -582,6 +582,13 @@ body.broadcast-mode #cap-box-text {
   text-decoration: underline;
 }
 
+/* Web Speech interim ライブ表示 (v0.13.9) — opacity は inline で個別指定 */
+.cap-para-interim {
+  /* 「途中である」記号として斜体は付けない（読みづらくなる）。
+     opacity だけで識別。確定すると別の cap-para としてフェードイン置換される流れ。 */
+  font-style: normal;
+}
+
 /* オーバーレイ接続フィードバック用トースト（右上に出して消える） */
 .cap-overlay-toast {
   position: fixed;

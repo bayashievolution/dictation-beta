@@ -16,6 +16,8 @@ const SESSIONS_KEY = 'dictation:sessions';
 const ACTIVE_TAB_KEY = 'dictation:activeTab';
 const SETTINGS_KEY = 'dictation:captionsSettings';
 const BOX_KEY = 'dictation:captionsBox';
+// Web Speech モード時に母艦が書き込む interim ライブ表示用（v0.13.9〜）
+const LIVE_INTERIM_KEY = 'dictation:liveInterim';
 
 const DEFAULT_SETTINGS = {
   fontSize: 64,
@@ -620,21 +622,33 @@ function renderLatest() {
   const n = Math.max(1, Math.min(5, settings.paraCount || 2));
   const latest = paras.slice(-n);
 
-  if (latest.length === 0) {
+  // v0.13.9: Web Speech モード用 interim ライブ表示。母艦が書いた liveInterim
+  // エントリを読んで、最新段落の末尾 or 別段落として薄く描画する。
+  const live = loadLiveInterim(session.id);
+  const interimText = live && live.text ? String(live.text).trim() : '';
+  const interimOpacity = live ? Math.max(0, Math.min(100, Number(live.opacity) || 70)) : 70;
+
+  if (latest.length === 0 && !interimText) {
     renderTextIntoBox('');
   } else if (settings.osdAi) {
     // AI OSD整形: 生テキスト抽出→Gemini→整形後を描画（デバウンス）
+    // interim は OSD AI 整形ループに混ぜると整形対象が安定しないため、
+    // ここでは interim を末尾に「（途中…）」として加えるのみとする。
     const rawText = latest.map(p => cleanRawParagraphText(p)).filter(Boolean).join('\n\n');
     scheduleOsdAiRender(rawText);
-    // 即座の表示としてAIキャッシュ or 生テキストを出す
     const immediate = (_osdAiCache.output && _osdAiCache.inputHash === hashStr(rawText))
       ? _osdAiCache.output
       : rawText;
-    renderTextIntoBox(textToOsdHtml(immediate));
+    let html = textToOsdHtml(immediate);
+    if (interimText) {
+      html += `<p class="cap-para cap-para-interim" style="opacity:${interimOpacity / 100}">${escapeHtml(interimText)}</p>`;
+    }
+    renderTextIntoBox(html);
   } else {
     // 通常モード: 段落構造を保って表示
+    // 最新確定段落を出した後に、interim があれば最末尾に「途中表示」段落を追加
     const html = latest.map((p, idx) => {
-      const isLast = idx === latest.length - 1;
+      const isLast = idx === latest.length - 1 && !interimText;
       const cls = 'cap-para' + (isLast ? ' latest' : '');
       const h2 = p.querySelector && p.querySelector('h2');
       if (h2) {
@@ -646,7 +660,12 @@ function renderLatest() {
       const text = escapeHtml((p.textContent || '').trim());
       return `<p class="${cls}">${text}</p>`;
     }).join('');
-    renderTextIntoBox(html);
+    let finalHtml = html;
+    if (interimText) {
+      // interim はライブの最新発話なので latest クラスも付ける（強調されるように）
+      finalHtml += `<p class="cap-para latest cap-para-interim" style="opacity:${interimOpacity / 100}">${escapeHtml(interimText)}</p>`;
+    }
+    renderTextIntoBox(finalHtml);
   }
 
   if (settings.followLive) {
@@ -773,13 +792,27 @@ function setStatus(mode, label) {
 function bindSync() {
   // 同一オリジンの別ページ（サイドパネル index.html）での localStorage.setItem が storage イベントとしてここに届く
   window.addEventListener('storage', (e) => {
-    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY) {
+    if (e.key === SESSIONS_KEY || e.key === ACTIVE_TAB_KEY || e.key === LIVE_INTERIM_KEY) {
       renderLatest();
     }
   });
   // 保険のため、1秒ごとのポーリングも（storageイベントは別タブに対してしか発火しないが、
   // どのタイミングでも確実に最新が出るように）
   setInterval(renderLatest, 1000);
+}
+
+/** Web Speech 母艦から書かれた liveInterim を読む（v0.13.9）
+ *  対象セッションでない or 古すぎ（5秒以上）なら無視。 */
+function loadLiveInterim(activeSessionId) {
+  try {
+    const raw = localStorage.getItem(LIVE_INTERIM_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.text) return null;
+    if (obj.sessionId !== activeSessionId) return null;
+    if (Date.now() - (obj.updatedAt || 0) > 5000) return null;
+    return obj;
+  } catch { return null; }
 }
 
 /* ───────── ネイティブオーバーレイ連携 (dictation-overlay v0.2.0) ─────────

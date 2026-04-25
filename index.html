@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&family=Noto+Serif+JP:wght@400;500;600&family=M+PLUS+1p:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;600&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600&family=Kaisei+Opti:wght@400;500&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=0.13.8" />
+  <link rel="stylesheet" href="style.css?v=0.13.9" />
 </head>
 <body>
   <div id="app">
@@ -338,6 +338,32 @@
               などの仮想オーディオケーブルをインストール。
             </small>
           </div>
+          <div class="field-conditional" id="webspeech-only-fields">
+            <div class="field-conditional-inner">
+              <label class="field">
+                <span class="field-label">字幕の途中表示（更新間隔）</span>
+                <select id="input-webspeech-interim-debounce">
+                  <option value="0">即時（最も速いが、訂正でチラつく）</option>
+                  <option value="100">短め 100ms（速い喋り向け）</option>
+                  <option value="300">普通 300ms（既定・バランス）</option>
+                  <option value="800">ゆっくり 800ms（落ち着き重視）</option>
+                  <option value="999999">表示しない（v0.13.5 と同じ・確定後のみ）</option>
+                </select>
+                <small class="field-hint">Web Speech の認識途中（interim）を字幕／オーバーレイにライブ反映。喋りに字幕が追いつかない時は短めに。</small>
+              </label>
+              <label class="field">
+                <span class="field-label">途中表示の透明度</span>
+                <select id="input-webspeech-interim-opacity">
+                  <option value="100">区別なし（確定文字と同じ濃さ）</option>
+                  <option value="70">薄め（途中である合図・既定）</option>
+                  <option value="40">かなり薄い</option>
+                </select>
+              </label>
+              <div class="field" style="display:flex;justify-content:flex-end">
+                <button type="button" id="btn-webspeech-defaults" class="btn-secondary">Web Speech 設定をデフォルトに戻す</button>
+              </div>
+            </div>
+          </div>
           <div class="field-conditional" id="gemini-only-fields">
             <div class="field-conditional-inner">
               <label class="field">
@@ -548,8 +574,8 @@
     </div>
   </div>
 
-  <script src="icons.js?v=0.13.8"></script>
-  <script src="gemini.js?v=0.13.8"></script>
-  <script src="app.js?v=0.13.8"></script>
+  <script src="icons.js?v=0.13.9"></script>
+  <script src="gemini.js?v=0.13.9"></script>
+  <script src="app.js?v=0.13.9"></script>
 </body>
 </html>
