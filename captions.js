@@ -912,8 +912,10 @@ let _lastRenderedText = '';
 
 /** v0.13.31: 字幕バッファのスクロール演出用 state */
 let _lastShownSliceTs = []; // 前回表示した slice の ts リスト（新規行判定用）
-let _pendingSliceCount = 0;  // バッチング待ち（次の表示更新までに溜まった新規 slice 数）
-let _lastBufLength = 0;      // 前回 renderLatest 呼び出し時の liveBuf.length
+// バグ修正：以前は _pendingSliceCount += (liveBuf.length - _lastBufLength) で
+// バッチサイズを判定していたが、liveBuf は CAPTION_BUFFER_MAX=10 で頭打ちになるため
+// 10 件溜まった後 delta=0 になりスクロールが永久停止する問題があった。
+// 修正版：「前回表示した最大 ts」より新しい slice の数を毎回 ts ベースで再計算する。
 
 /** v0.13.31: 字幕バッファ（app.js が 30 字 slice 単位で書く配列）を読む */
 function loadCaptionBuffer() {
@@ -965,22 +967,24 @@ function renderLatest() {
     const n = Math.max(1, Math.min(5, settings.paraCount || 2));
     const scrollN = Math.max(1, Math.min(3, settings.scrollLineCount || 1));
 
-    // 新規 slice 数を蓄積（バッファ末尾の追加分）
-    const delta = Math.max(0, liveBuf.length - _lastBufLength);
-    _pendingSliceCount += delta;
-    _lastBufLength = liveBuf.length;
+    // 「前回表示した最大 ts」より新しい slice の数を ts ベースで再計算。
+    // liveBuf.length は CAPTION_BUFFER_MAX=10 で頭打ちになるため、length 差分では駄目。
+    const lastShownTs = _lastShownSliceTs.length > 0
+      ? Math.max.apply(null, _lastShownSliceTs.map(Number))
+      : 0;
+    const unseenCount = lastShownTs > 0
+      ? liveBuf.filter(s => Number(s.ts) > lastShownTs).length
+      : liveBuf.length;
 
     // 初回表示でなければ、scrollN 個溜まるまで表示更新を待つ
     const isFirstShow = _lastShownSliceTs.length === 0;
-    if (!isFirstShow && _pendingSliceCount < scrollN) {
+    if (!isFirstShow && unseenCount < scrollN) {
       // バッチング待ち：表示はそのまま（return せずステータスだけ更新）
       const updated = Number(liveBuf[liveBuf.length - 1].ts) || 0;
       const live = Date.now() - updated < 15000;
       setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
       return;
     }
-    // 表示更新
-    _pendingSliceCount = 0;
 
     const latest = liveBuf.slice(-n);
     const html = latest.map((slice, idx) => {
@@ -999,8 +1003,6 @@ function renderLatest() {
   } else {
     // バッファが空（録音停止後等）なら state をリセット
     _lastShownSliceTs = [];
-    _pendingSliceCount = 0;
-    _lastBufLength = 0;
   }
 
   // 以下、既存のブロックモード（最新N段落表示、transcript ベース）。
