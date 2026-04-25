@@ -133,6 +133,12 @@ const DEFAULT_SETTINGS = {
   //   ドカっと長文が出てついていけない問題があるため、interim を字幕にライブ流す。
   webspeechInterimDebounceMs: 300, // 0=即時, 100/300/800 推奨。0 にすれば最も速い
   webspeechInterimOpacity: 70,     // 0-100。100 で確定文字と区別なし、低いほど薄く
+  // Web Speech モードの強制 commit（チャンク間隔）設定 (v0.13.14〜)
+  // - 0 にすると WebSpeech 任せ（既存挙動）、N 秒にすると N 秒ごとに recognition.stop()
+  //   を呼んで「ここまで」と区切らせる。Gemini Audio の audioChunkSec と対称的な仕組み。
+  // - 岡田斗司夫みたいに長く話し続ける人で final が遅れて字幕がドカっと出るのを防ぐ。
+  // - 話し手のリズムに合わせて 3〜10 秒で調整。
+  webspeechCommitSec: 6,
 };
 const WEB_SPEECH_DEFAULTS = {
   webspeechInterimDebounceMs: 300,
@@ -349,6 +355,7 @@ const els = {
   inputMinChunkBytes: document.getElementById('input-min-chunk-bytes'),
   inputWsInterimDebounce: document.getElementById('input-webspeech-interim-debounce'),
   inputWsInterimOpacity: document.getElementById('input-webspeech-interim-opacity'),
+  inputWsCommitSec: document.getElementById('input-webspeech-commit-sec'),
   btnWebSpeechDefaults: document.getElementById('btn-webspeech-defaults'),
   zoomBar: document.getElementById('zoom-bar'),
   zoomRange: document.getElementById('zoom-range'),
@@ -528,6 +535,43 @@ function setParagraphContent(pEl, refinedText) {
       pEl.appendChild(body);
     }
     isFirst = false;
+  }
+}
+
+/* ───────── Web Speech 強制 commit タイマー (v0.13.14) ─────────
+ * settings.webspeechCommitSec 秒ごとに recognition.stop() を呼び出して、
+ * Web Speech に「ここまで」と区切らせる。stop() で現在の interim が final として
+ * onresult に届き、appendRawChunk で transcript の新しい段落になる。
+ * その後 onend が呼ばれ、既存の自動再起動ロジック（state.shouldAutoRestart）が
+ * recognition を再 start するので、認識ループは継続する。
+ *
+ * Gemini Audio の audioChunkSec（MediaRecorder.stop → 再start）と対称的な仕組み。
+ * 0 にすると WebSpeech 任せの既存挙動。岡田斗司夫みたいに長文を続けて喋る人で
+ * final が遅れて字幕がドカっと出るのを防ぐためのコア機能。
+ */
+function restartWebSpeechCommitTimer() {
+  stopWebSpeechCommitTimer();
+  const sec = Number(state.settings.webspeechCommitSec || 0);
+  if (sec <= 0) return; // OFF
+  const intervalMs = Math.max(2, Math.min(20, sec)) * 1000;
+  state.webspeechCommitTimer = setInterval(() => {
+    if (!state.isRecording) return;
+    if (state.settings.inputMode !== 'web-speech') return;
+    if (!state.recognition) return;
+    try {
+      // stop() を呼ぶと Web Speech が現在の interim を final として吐き出し、
+      // 続いて onend が走る → 既存の自動再起動ロジックで rec.start() が走る。
+      state.recognition.stop();
+      diagLog.info(`Web Speech 強制 commit (${sec}秒)`);
+    } catch (e) {
+      console.warn('webspeech commit stop failed', e);
+    }
+  }, intervalMs);
+}
+function stopWebSpeechCommitTimer() {
+  if (state.webspeechCommitTimer) {
+    clearInterval(state.webspeechCommitTimer);
+    state.webspeechCommitTimer = null;
   }
 }
 
@@ -1210,11 +1254,13 @@ async function startRecording() {
   state.isRecording = true;
   state.shouldAutoRestart = true;
   state.recordingSessionId = state.activeId; // BG録音用に固定
-  diagLog.info(`録音開始 (Web Speech) session=${state.recordingSessionId?.slice(-6)}`);
+  diagLog.info(`録音開始 (Web Speech) session=${state.recordingSessionId?.slice(-6)} commitSec=${state.settings.webspeechCommitSec || 0}`);
   try {
     state.recognition.start();
     setRecordingUI(true);
     resetLongSilenceTimer();
+    // v0.13.14: Web Speech 強制 commit タイマーを起動（commitSec=0 なら何もしない）
+    restartWebSpeechCommitTimer();
   } catch (e) {
     console.error('start failed', e);
     setStatus('error', '開始失敗: ' + e.message);
@@ -1236,6 +1282,8 @@ function stopRecording() {
   if (state.settings.inputMode === 'gemini-audio') {
     stopGeminiAudioRecording();
   } else {
+    // v0.13.14: 強制 commit タイマーを止めてから recognition を止める
+    stopWebSpeechCommitTimer();
     if (state.recognition) {
       try { state.recognition.stop(); } catch {}
     }
@@ -3630,6 +3678,7 @@ function openSettings() {
   if (els.inputMinChunkBytes) els.inputMinChunkBytes.value = state.settings.audioMinChunkBytes ?? 400;
   if (els.inputWsInterimDebounce) els.inputWsInterimDebounce.value = String(state.settings.webspeechInterimDebounceMs ?? 300);
   if (els.inputWsInterimOpacity) els.inputWsInterimOpacity.value = String(state.settings.webspeechInterimOpacity ?? 70);
+  if (els.inputWsCommitSec) els.inputWsCommitSec.value = String(state.settings.webspeechCommitSec ?? 6);
   populateAudioDevices();
   applyGeminiOnlyVisibility(/* animated */ false);
   applyWebSpeechOnlyVisibility(/* animated */ false);
@@ -3668,6 +3717,14 @@ function saveSettingsFromForm() {
   if (els.inputMinChunkBytes) state.settings.audioMinChunkBytes = Math.max(100, Math.min(5000, Number(els.inputMinChunkBytes.value) || 400));
   if (els.inputWsInterimDebounce) state.settings.webspeechInterimDebounceMs = Math.max(0, Math.min(999999, Number(els.inputWsInterimDebounce.value) ?? 300));
   if (els.inputWsInterimOpacity) state.settings.webspeechInterimOpacity = Math.max(0, Math.min(100, Number(els.inputWsInterimOpacity.value) || 70));
+  if (els.inputWsCommitSec) {
+    const newSec = Math.max(0, Math.min(20, Number(els.inputWsCommitSec.value) || 0));
+    if (newSec !== state.settings.webspeechCommitSec) {
+      state.settings.webspeechCommitSec = newSec;
+      // 録音中なら即時タイマー反映
+      if (typeof restartWebSpeechCommitTimer === 'function') restartWebSpeechCommitTimer();
+    }
+  }
   state.settings.transcriptFont = els.fontTranscript.value;
   state.settings.transcriptSize = Math.max(10, Math.min(36, Number(els.sizeTranscript.value) || 17));
   state.settings.memoFont = els.fontMemo.value;

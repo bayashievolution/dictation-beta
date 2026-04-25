@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.13.13" />
+  <link rel="stylesheet" href="captions.css?v=0.13.14" />
 </head>
 <body class="cap-body">
   <div id="cap-canvas">
@@ -122,7 +122,10 @@
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
       </div>
 
-      <div class="cap-field">
+      <!-- v0.13.14 整理：字幕表示モードセレクトを一旦メニューから隠す。
+           内部のストリーム機能（splitIntoStreamLines / streamIngestFromSession 等）
+           は captions.js に残してあるので、ここを `hidden` 外せば再表示できる。 -->
+      <div class="cap-field hidden">
         <label class="cap-label">字幕表示モード</label>
         <select id="cap-display-mode">
           <option value="block" selected>ブロック（段落単位で最新N段落）</option>
@@ -257,7 +260,7 @@
     </div>
   </aside>
 
-  <script src="gemini.js?v=0.13.13"></script>
-  <script src="captions.js?v=0.13.13"></script>
+  <script src="gemini.js?v=0.13.14"></script>
+  <script src="captions.js?v=0.13.14"></script>
 </body>
 </html>
