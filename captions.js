@@ -1110,7 +1110,7 @@ function bindOverlayBridge() {
   if (els.btnOverlay) {
     els.btnOverlay.addEventListener('click', () => {
       if (isOverlayConnected()) disconnectOverlay();
-      else connectNativeOverlay();
+      else connectNativeOverlay({ userInitiated: true });
     });
   }
 
@@ -1118,7 +1118,7 @@ function bindOverlayBridge() {
   const connBtn = document.getElementById('cap-overlay-connect');
   if (connBtn) connBtn.addEventListener('click', () => {
     if (isOverlayConnected()) disconnectOverlay();
-    else connectNativeOverlay();
+    else connectNativeOverlay({ userInitiated: true });
   });
 
   // テスト字幕
