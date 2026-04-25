@@ -104,6 +104,10 @@ body.cap-body {
   line-height: var(--cap-line-height);
   text-shadow: var(--cap-text-shadow);
   -webkit-text-stroke: var(--cap-stroke);
+  /* 縁取りを「外側だけ」に見せるため、stroke を下層・fill を上層に重ねる。
+     これがないと -webkit-text-stroke は字画パスごとに stroke を描き、
+     字画同士の縁取りが内側で重なって字が潰れる（v0.13.4 修正）。 */
+  paint-order: stroke fill;
   word-break: break-word;
   overflow-wrap: break-word;
 }
