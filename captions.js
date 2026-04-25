@@ -828,10 +828,19 @@ function buildOverlaySettings() {
   };
 }
 
-function connectNativeOverlay() {
-  if (overlayState.port) return;
+/** ユーザーがボタンを押して開始した接続かどうか（失敗時のアラート表示判定用）*/
+let _overlayUserInitiated = false;
+
+function connectNativeOverlay(opts = {}) {
+  if (opts.userInitiated) _overlayUserInitiated = true;
+  console.log('[overlay] connectNativeOverlay called', { userInitiated: !!opts.userInitiated });
+  if (overlayState.port) {
+    console.log('[overlay] already has port, abort connect');
+    return;
+  }
   if (!chrome?.runtime?.connectNative) {
-    overlayState.lastError = 'Native Messaging APIが利用できません';
+    overlayState.lastError = 'Native Messaging API が利用できません（拡張機能を再読み込みしてください）';
+    console.warn('[overlay]', overlayState.lastError);
     onOverlayDisconnected();
     return;
   }
@@ -841,12 +850,33 @@ function connectNativeOverlay() {
     overlayState.port.onDisconnect.addListener(handleNativeDisconnect);
     overlayState.lastError = null;
     overlayState.connected = false;    // ready 受信を待つ
+    console.log('[overlay] connectNative() ok, waiting for ready...');
+    // 接続中インジケータをすぐ出す
+    showOverlayToast('ネイティブオーバーレイに接続中…');
     updateOverlayUI();
   } catch (e) {
     overlayState.port = null;
     overlayState.lastError = e?.message || String(e);
+    console.error('[overlay] connectNative threw:', e);
     onOverlayDisconnected();
   }
+}
+
+/** トースト：右上に1.8秒だけ出して消す（成功・失敗・接続中いずれも） */
+function showOverlayToast(message, kind = 'info') {
+  let el = document.getElementById('cap-overlay-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cap-overlay-toast';
+    el.className = 'cap-overlay-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.className = `cap-overlay-toast show ${kind}`;
+  clearTimeout(showOverlayToast._t);
+  showOverlayToast._t = setTimeout(() => {
+    el.className = 'cap-overlay-toast';
+  }, kind === 'error' ? 4500 : 1800);
 }
 
 function disconnectOverlay() {
@@ -858,7 +888,11 @@ function disconnectOverlay() {
 }
 
 function handleNativeMessage(msg) {
-  if (!msg || typeof msg !== 'object') return;
+  console.log('[overlay] ←', msg);
+  if (!msg || typeof msg !== 'object') {
+    console.warn('[overlay] invalid msg, ignored');
+    return;
+  }
   switch (msg.type) {
     case 'ready':
       overlayState.connected = true;
@@ -866,9 +900,11 @@ function handleNativeMessage(msg) {
       overlayState.platform = msg.platform || '?';
       overlayState.capabilities = Array.isArray(msg.capabilities) ? msg.capabilities : [];
       overlayState.lastError = null;
+      console.log('[overlay] ready: connected=true', overlayState);
+      showOverlayToast(`✓ オーバーレイ接続 v${overlayState.version} (${overlayState.platform})`, 'success');
       // モニタ情報を要求（multi-monitor 対応時のみ）
       if (hasOverlayCapability('multi-monitor')) {
-        try { overlayState.port.postMessage({ type: 'list_monitors' }); } catch {}
+        try { overlayState.port.postMessage({ type: 'list_monitors' }); } catch (e) { console.warn('list_monitors send failed', e); }
       }
       updateOverlayUI();
       // 直近の字幕を即時送信
@@ -879,6 +915,7 @@ function handleNativeMessage(msg) {
     case 'error':
       overlayState.lastError = `${msg.code || 'error'}: ${msg.message || ''}`;
       console.warn('[overlay error]', msg);
+      showOverlayToast(`オーバーレイエラー：${msg.code || 'error'}`, 'error');
       updateOverlayUI();
       break;
     case 'click_through':
@@ -887,22 +924,31 @@ function handleNativeMessage(msg) {
       break;
     case 'monitor_list':
       overlayState.monitors = Array.isArray(msg.monitors) ? msg.monitors : [];
+      console.log('[overlay] monitors:', overlayState.monitors);
       updateOverlayUI();
       break;
     case 'position_changed':
       // Phase 3 で対応予定
       break;
     default:
-      // 未知 type は無視
+      console.log('[overlay] unknown msg type, ignored:', msg.type);
       break;
   }
 }
 
 function handleNativeDisconnect() {
   const err = chrome.runtime.lastError;
+  console.warn('[overlay] disconnect', { err, lastErrorMessage: err?.message, hadPort: !!overlayState.port, wasConnected: overlayState.connected });
   overlayState.port = null;
   overlayState.connected = false;
   overlayState.lastError = err?.message || null;
+  if (_overlayUserInitiated) {
+    showOverlayToast(
+      `オーバーレイ切断${overlayState.lastError ? '：' + overlayState.lastError : ''}`,
+      'error'
+    );
+    _overlayUserInitiated = false;
+  }
   onOverlayDisconnected();
 }
 

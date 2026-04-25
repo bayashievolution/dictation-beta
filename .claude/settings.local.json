@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"$HOME\\\\Desktop\\\\dictation-v0.9.35.zip\" | Format-List Name, Length, FullName; Write-Output '--- contents ---'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\(\"$HOME\\\\Desktop\\\\dictation-v0.9.35.zip\"\\); $zip.Entries | Select-Object FullName, Length | Format-Table -AutoSize; $zip.Dispose\\(\\))"
+    ]
+  }
+}

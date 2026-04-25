@@ -577,3 +577,36 @@ body.broadcast-mode #cap-box-text {
   color: var(--cap-accent);
   text-decoration: underline;
 }
+
+/* オーバーレイ接続フィードバック用トースト（右上に出して消える） */
+.cap-overlay-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: rgba(20, 20, 25, 0.95);
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  max-width: 420px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  white-space: pre-wrap;
+}
+.cap-overlay-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.cap-overlay-toast.success {
+  background: rgba(52, 211, 153, 0.95);
+  color: #062018;
+}
+.cap-overlay-toast.error {
+  background: rgba(248, 113, 113, 0.95);
+  color: #1a0606;
+}
