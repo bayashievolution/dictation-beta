@@ -656,6 +656,14 @@ function appendRawChunk(text) {
   if (inBg) syncBgToSession();
   else autoScroll();
   updateActionButtons();
+  // v0.13.18: final ごとに localStorage に persist。
+  // 旧来は appendRawChunk で persist しておらず、別タイミング（autoSave 等）で
+  // まとめて persist されていたため、字幕ウィンドウへの伝達が遅延し、
+  // 「ブロックが溜まってから一気に流れる」症状が出ていた。
+  // Gemini Audio は sendAudioChunkToGemini 内で persist しているので問題なかった。
+  // ここで persist を呼ぶことで Web Speech も final ごとに字幕ウィンドウへ
+  // storage event が飛び、リアルタイム反映される。
+  persistSessions();
 }
 
 function getContextForGemini() {
