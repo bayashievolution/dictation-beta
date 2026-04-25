@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600&family=Noto+Serif+JP:wght@400;500;600&family=M+PLUS+1p:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;600&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600&family=Kaisei+Opti:wght@400;500&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=0.13.4" />
+  <link rel="stylesheet" href="style.css?v=0.13.5" />
 </head>
 <body>
   <div id="app">
@@ -326,23 +326,23 @@
             <span class="field-label">入力モード</span>
             <label class="field-row" style="margin-bottom:4px">
               <input type="radio" name="input-mode" id="mode-webspeech" value="web-speech" />
-              <span><strong>Web Speech</strong> — 速い・無料。システム既定マイクのみ</span>
+              <span><strong>Web Speech</strong> — 速い・無料・システム既定マイクのみ</span>
             </label>
             <label class="field-row" style="margin-bottom:0">
               <input type="radio" name="input-mode" id="mode-gemini" value="gemini-audio" />
-              <span><strong>Gemini Audio</strong> — 10〜15秒遅延。任意のデバイス選択可（Zoom/Meet等）</span>
+              <span><strong>Gemini Audio</strong> — 小さい声に強い・10〜15秒遅延・任意のデバイス選択可</span>
             </label>
+            <small class="field-hint" style="margin-top:8px;display:block">
+              Zoom/Meet の音声を取り込むには
+              <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener">VB-Cable</a>
+              などの仮想オーディオケーブルをインストール。
+            </small>
           </div>
           <div class="field-conditional" id="gemini-only-fields">
             <div class="field-conditional-inner">
               <label class="field">
                 <span class="field-label">音声入力デバイス</span>
                 <select id="input-audio-device"></select>
-                <small class="field-hint">
-                  Zoom/Meet の音声を取り込むには
-                  <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener">VB-Cable</a>
-                  などの仮想オーディオケーブルを入れ、会議アプリの音声出力を仮想入力に回してから、ここで選択。
-                </small>
               </label>
               <label class="field">
                 <span class="field-label">Geminiチャンク間隔（秒）</span>
@@ -548,8 +548,8 @@
     </div>
   </div>
 
-  <script src="icons.js?v=0.13.4"></script>
-  <script src="gemini.js?v=0.13.4"></script>
-  <script src="app.js?v=0.13.4"></script>
+  <script src="icons.js?v=0.13.5"></script>
+  <script src="gemini.js?v=0.13.5"></script>
+  <script src="app.js?v=0.13.5"></script>
 </body>
 </html>
