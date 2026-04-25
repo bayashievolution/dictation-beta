@@ -653,16 +653,24 @@ function appendRawChunk(text) {
     const body = state.pendingChunkEl.querySelector('.p-body');
     if (body) body.textContent = state.pendingChunkText;
   }
-  if (inBg) syncBgToSession();
-  else autoScroll();
+  if (inBg) {
+    syncBgToSession();
+  } else {
+    autoScroll();
+    // v0.13.19: 通常 active 録音時は、DOM の最新 paragraph を state.sessions[active].transcript
+    // に同期する必要がある（syncBgToSession は BG 時のみで対称性が抜けていた）。
+    // これがないと v0.13.18 で persist しても古い transcript が localStorage に書かれて
+    // 字幕ウィンドウに反映されない（ブロック溜まり一気流れ症状）。
+    // fromAutosave: true でタイピング Undo の baseline 同期はスキップする
+    // （録音中の baseline 更新は別経路で管理するため、ここで上書きしない）。
+    snapshotActiveToSession({ fromAutosave: true });
+  }
   updateActionButtons();
   // v0.13.18: final ごとに localStorage に persist。
   // 旧来は appendRawChunk で persist しておらず、別タイミング（autoSave 等）で
   // まとめて persist されていたため、字幕ウィンドウへの伝達が遅延し、
   // 「ブロックが溜まってから一気に流れる」症状が出ていた。
   // Gemini Audio は sendAudioChunkToGemini 内で persist しているので問題なかった。
-  // ここで persist を呼ぶことで Web Speech も final ごとに字幕ウィンドウへ
-  // storage event が飛び、リアルタイム反映される。
   persistSessions();
 }
 
