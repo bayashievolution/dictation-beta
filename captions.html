@@ -7,13 +7,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="captions.css?v=0.13.31" />
-</head>
-<body class="cap-body">
   <!-- v0.13.31: settingsOnly モード（iframe 埋め込み時）。
        URL に ?settingsOnly=1 が付いていたら、字幕表示エリア・ツールバーを隠して
        設定パネルだけを常時表示する。captions.html を「設定 + Native Messaging hub」
-       として再利用（メイン画面の字幕モーダル内 iframe で使う想定）。 -->
+       として再利用（メイン画面の字幕モーダル内 iframe で使う想定）。
+       <head> 内で評価することで、CSS 適用の最初のサイクルから cap-settings-only
+       クラスが効くようにする（FOUC 防止）。 -->
   <script>
     (function () {
       try {
@@ -24,6 +23,9 @@
       } catch (e) { /* no-op */ }
     })();
   </script>
+  <link rel="stylesheet" href="captions.css?v=0.13.31" />
+</head>
+<body class="cap-body">
   <div id="cap-canvas">
     <div id="cap-box" class="cap-box">
       <!-- スクロールする内側ラッパ。リサイズハンドルはこの外（cap-box直下）に置いて

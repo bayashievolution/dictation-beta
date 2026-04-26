@@ -4816,15 +4816,18 @@ const captionsModal = document.getElementById('captions-modal');
 const captionsModalIframe = document.getElementById('captions-modal-iframe');
 if (btnCaptions && captionsModal && captionsModalIframe) {
   btnCaptions.title = '字幕設定';
+  // chrome.runtime.getURL の引数にクエリ（?）を含めると extension URL として正しく解決されないため、
+  // ベース URL を取ってから ?settingsOnly=1 を後付けする。
+  const captionsBaseUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+    ? chrome.runtime.getURL('captions.html')
+    : 'captions.html';
+  const captionsModalSrc = captionsBaseUrl + '?settingsOnly=1';
   btnCaptions.addEventListener('click', () => {
     // 現在のセッションを先に保存（iframe 内 captions.js が transcript フォールバックで読むことがある）
     try { snapshotActiveToSession(); persistSessions(); } catch (_) {}
-    // 初回 or 切断後はロード、開いたままなら再ロードしない（state 維持）
-    const desiredSrc = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
-      ? chrome.runtime.getURL('captions.html?settingsOnly=1')
-      : 'captions.html?settingsOnly=1';
-    if (!captionsModalIframe.src || captionsModalIframe.src.indexOf('captions.html') === -1) {
-      captionsModalIframe.src = desiredSrc;
+    // src が違っていれば（旧 URL or 未セット）必ず読み直す。同じならそのまま（state 維持）。
+    if (captionsModalIframe.src !== captionsModalSrc) {
+      captionsModalIframe.src = captionsModalSrc;
     }
     captionsModal.classList.remove('hidden');
   });
