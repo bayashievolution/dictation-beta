@@ -1200,14 +1200,24 @@ function cleanRawParagraphText(p) {
     .trim();
 }
 
-/** AI整形結果のテキスト（改行・→記号を含む）を表示用HTMLに変換 */
+/** AI整形結果のテキスト（改行・→記号を含む）を表示用HTMLに変換。
+ * v0.13.31: 各行を独立した <p class="cap-para"> として描画することで、
+ * ブロック間隔（段落間 margin）・paraCount（最新 N 段落表示）が効くようにする。
+ * 1 個の <p> 内 <br> 改行だと両設定が無効化される問題を修正。 */
 function textToOsdHtml(text) {
   if (!text) return '';
-  return '<p class="cap-para latest">' +
-    escapeHtml(text)
-      .replace(/→\s*\n/g, '<span class="osd-cont">→</span><br>')  // →改行は継続マーカー
-      .replace(/\n/g, '<br>') +
-    '</p>';
+  const lines = String(text).split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return '';
+  // paraCount で最新 N 行に絞る（settings の値、1〜5）
+  const n = Math.max(1, Math.min(5, Number(settings.paraCount) || 2));
+  const displayLines = lines.slice(-n);
+  return displayLines.map((line, idx) => {
+    const isLast = idx === displayLines.length - 1;
+    const cls = 'cap-para' + (isLast ? ' latest' : '');
+    // 行末の「→」継続マーカーを <span> で装飾
+    const html = escapeHtml(line).replace(/→$/, '<span class="osd-cont">→</span>');
+    return `<p class="${cls}">${html}</p>`;
+  }).join('');
 }
 
 /** renderTextIntoBox: トランジションを適用してテキスト領域を更新 */
