@@ -168,6 +168,13 @@
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
       </div>
 
+      <!-- v0.13.31: 「ブロック間隔」（段落間 margin）。
+           「行間」と同じ字幕の縦余白系なのでこの位置に置く（やっさん指示）。 -->
+      <div class="cap-field">
+        <label class="cap-label">ブロック間隔 <output id="cap-block-gap-out">0.0</output></label>
+        <input type="range" id="cap-block-gap" min="0" max="25" step="1" value="0" />
+      </div>
+
       <!-- v0.13.31: やっさん指示の「字幕背景」セクション。 -->
       <h3 class="cap-section-title">字幕背景</h3>
 
@@ -197,13 +204,6 @@
 
       <!-- 区切り線（字幕背景セクション後） -->
       <hr class="cap-separator" />
-
-      <!-- v0.13.31: 旧「行間」スライダーは「ブロック間隔」（段落間 margin）にリネーム + 機能変更。
-           「字幕」セクションには含めず、区切り線後に配置（やっさん指示の構造に従う）。 -->
-      <div class="cap-field">
-        <label class="cap-label">ブロック間隔 <output id="cap-block-gap-out">0.0</output></label>
-        <input type="range" id="cap-block-gap" min="0" max="25" step="1" value="0" />
-      </div>
 
       <!-- v0.13.31: 字幕表示モードセレクトはやっさん指示で UI 非表示。
            内部は block 固定。flow/stream 機能は将来用に残置（hidden）。 -->
