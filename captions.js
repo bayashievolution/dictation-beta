@@ -1270,6 +1270,27 @@ function buildOverlaySettings() {
 /** ユーザーがボタンを押して開始した接続かどうか（失敗時のアラート表示判定用）*/
 let _overlayUserInitiated = false;
 
+/** v0.13.31: 直前の接続状態（updateOverlayUI で「未接続→接続中」遷移を検知してトーストを出す） */
+let _wasOverlayConnected = false;
+let _overlayToastTimer = null;
+
+/** v0.13.31: トースト「字幕表示 ON」を 3 秒だけ表示する */
+function showOverlayToast(text) {
+  const toast = document.getElementById('cap-overlay-toast');
+  if (!toast) return;
+  toast.textContent = text;
+  // 一旦クラスを外して animation をリスタート（連続呼び出しに耐える）
+  toast.classList.remove('show');
+  // 強制リフロー（次フレーム実行でも可だが、確実性のため getBoundingClientRect で）
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  if (_overlayToastTimer) clearTimeout(_overlayToastTimer);
+  _overlayToastTimer = setTimeout(() => {
+    toast.classList.remove('show');
+    _overlayToastTimer = null;
+  }, 3000);
+}
+
 function connectNativeOverlay(opts = {}) {
   if (opts.userInitiated) _overlayUserInitiated = true;
   console.log('[overlay] connectNativeOverlay called', { userInitiated: !!opts.userInitiated });
@@ -1544,10 +1565,17 @@ function onOverlayPositionChanged(evt) {
 
 function sendOverlayTestCaption() {
   if (!isOverlayConnected()) {
-    alert('ネイティブオーバーレイが見つかりません。\n設定パネルの「接続」ボタンを押してください。');
+    alert('ネイティブオーバーレイが見つかりません。\n設定パネルの「字幕表示」をONにしてください。');
     return;
   }
   scheduleOverlayCaption('テスト字幕です。\nネイティブオーバーレイ接続OK →\n継続行サンプル');
+  flushOverlayCaption();
+}
+
+/** v0.13.31: テスト字幕送信を消す（hide_caption） */
+function clearOverlayTestCaption() {
+  if (!isOverlayConnected()) return;
+  scheduleOverlayCaption('');
   flushOverlayCaption();
 }
 
@@ -1566,9 +1594,18 @@ function updateOverlayUI() {
   const stat = document.getElementById('cap-overlay-status');
   const ctBtn = document.getElementById('cap-overlay-clickthrough');
   const monSel = document.getElementById('cap-overlay-monitor');
-  const testBtn = document.getElementById('cap-overlay-test');
+  // v0.13.31: テスト字幕は ボタン → トグルスイッチに変更
+  const testToggleEl = document.getElementById('cap-overlay-test-toggle');
   const toggleEl = document.getElementById('cap-overlay-toggle');
   const dlLink = document.getElementById('cap-overlay-install');
+
+  // v0.13.31: 「未接続→接続中」に切り替わったタイミングを検知して
+  // 「字幕表示 ON」トーストを 3 秒だけ出す。
+  const isNowConnected = isOverlayConnected();
+  if (isNowConnected && !_wasOverlayConnected) {
+    showOverlayToast('字幕表示 ON');
+  }
+  _wasOverlayConnected = isNowConnected;
 
   if (stat) {
     if (isOverlayConnected()) {
@@ -1596,8 +1633,10 @@ function updateOverlayUI() {
     // v0.13.31: トグル化（チェック=接続中）。状態変化は change イベントで処理。
     toggleEl.checked = isOverlayConnected();
   }
-  if (testBtn) {
-    testBtn.disabled = !isOverlayConnected();
+  if (testToggleEl) {
+    testToggleEl.disabled = !isOverlayConnected();
+    // 切断したら自動的に OFF（テスト字幕も消える前提）
+    if (!isOverlayConnected() && testToggleEl.checked) testToggleEl.checked = false;
   }
   if (ctBtn) {
     const supported = hasOverlayCapability('click-through');
@@ -1645,9 +1684,12 @@ function bindOverlayBridge() {
     else disconnectOverlay();
   });
 
-  // テスト字幕
-  const testBtn = document.getElementById('cap-overlay-test');
-  if (testBtn) testBtn.addEventListener('click', sendOverlayTestCaption);
+  // v0.13.31: テスト字幕送信トグル（ON で送信、OFF で消す）
+  const testToggleEl = document.getElementById('cap-overlay-test-toggle');
+  if (testToggleEl) testToggleEl.addEventListener('change', () => {
+    if (testToggleEl.checked) sendOverlayTestCaption();
+    else clearOverlayTestCaption();
+  });
 
   // クリックスルー
   const ctBtn = document.getElementById('cap-overlay-clickthrough');

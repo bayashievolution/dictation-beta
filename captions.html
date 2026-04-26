@@ -60,6 +60,8 @@
           <input type="checkbox" id="cap-overlay-toggle" />
           <span>字幕表示</span>
         </label>
+        <!-- v0.13.31: 接続成功フィードバック（「字幕表示 ON」、3 秒でふんわり消える） -->
+        <div id="cap-overlay-toast" class="cap-overlay-toast" aria-hidden="true"></div>
         <small class="cap-hint">
           ZoomやMeet・他アプリの上に直接字幕が乗ります。
           初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。（Windows のみ対応）
@@ -72,6 +74,15 @@
           <span>字幕位置を固定</span>
         </label>
         <small class="cap-hint">OFF にするとオーバーレイをドラッグして位置調整できます。</small>
+      </div>
+
+      <!-- v0.13.31: テスト字幕送信トグル（やっさん指示で表示モニタの上に。
+           ON でテスト用字幕がオーバーレイに送られ、OFF で消える）。 -->
+      <div class="cap-field">
+        <label class="cap-toggle">
+          <input type="checkbox" id="cap-overlay-test-toggle" disabled />
+          <span>テスト字幕送信</span>
+        </label>
       </div>
 
       <div class="cap-field">
@@ -134,11 +145,11 @@
         </div>
       </div>
 
-      <!-- v0.13.31: オーバーレイ背景の角丸（border-radius）。0=直角〜32px=丸め強。 -->
+      <!-- v0.13.31: オーバーレイ背景の角丸（border-radius）。
+           ラベルは「字幕背景の角を丸く」（やっさん指示でリネーム）、説明文は撤去。 -->
       <div class="cap-field">
-        <label class="cap-label">角丸 <output id="cap-border-radius-out">8px</output></label>
+        <label class="cap-label">字幕背景の角を丸く <output id="cap-border-radius-out">8px</output></label>
         <input type="range" id="cap-border-radius" min="0" max="32" step="1" value="8" />
-        <small class="cap-hint">オーバーレイ背景の角の丸み（dictation-overlay 側 v0.4 以降で反映）。</small>
       </div>
 
       <div class="cap-field">
