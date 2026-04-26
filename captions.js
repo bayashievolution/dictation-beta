@@ -1373,15 +1373,15 @@ function buildOverlaySettings() {
     strokeColor: settings.strokeColor,
     strokeWidth: Number(settings.strokeWidth) || 2,
     lineHeightTenth: Number(settings.lineHeightTenth) || 14,
-    // v0.13.31: 角丸（px、0〜32）。dictation-overlay 側 v0.4+ で .caption の border-radius に反映予定。
-    // 旧 overlay は未知フィールドを無視するので送って害なし（NATIVE_MESSAGING_SPEC §4.2 settings は任意）。
-    borderRadius: Math.max(0, Math.min(32, Number(settings.borderRadius) || 0)),
-    // v0.13.31: ブロック間隔（段落間 margin-bottom em x 10、0〜25）。dictation-overlay 側で
-    // .caption の段落間に反映予定（依頼起票予定）。旧 overlay は未知フィールドを無視するので送って害なし。
-    blockGapTenth: Math.max(0, Math.min(25, Number(settings.blockGapTenth) || 0)),
-    // v0.13.31: 字幕背景のマージン（.caption の padding、px）。dictation-overlay v0.4+ で反映予定。
-    paddingX: Math.max(0, Math.min(60, Number(settings.paddingX) || 0)),
-    paddingY: Math.max(0, Math.min(40, Number(settings.paddingY) || 0)),
+    // v0.13.31: dictation-overlay 担当 v0.3.14 で対応済み。`Number(x) || 0` だと
+    // 未設定（undefined）時に 0 が送られて overlay 側で fallback できなかったので、
+    // `?? 既定値` でロード時欠落を埋める。やっさんが意図的に 0 にしたケースも保持される。
+    borderRadius: Math.max(0, Math.min(32, Number(settings.borderRadius ?? 8))),
+    // ブロック間隔（段落間 margin-bottom em x 10、0〜25）
+    blockGapTenth: Math.max(0, Math.min(25, Number(settings.blockGapTenth ?? 0))),
+    // 字幕背景のマージン（.caption の padding、px）
+    paddingX: Math.max(0, Math.min(60, Number(settings.paddingX ?? 24))),
+    paddingY: Math.max(0, Math.min(40, Number(settings.paddingY ?? 10))),
   };
 }
 
@@ -1474,18 +1474,17 @@ function handleNativeMessage(msg) {
       }
       updateOverlayUI();
       // v0.13.31: オーバーレイ側のハードコード初期テキスト「dictation-overlay ready」
-      // を「字幕表示 ON」に上書き、3 秒後に空テキストで消す（ふんわりは overlay 側の
-      // CSS transition に任せる）。3 秒経つ前に実字幕が来たら flushOverlayCaption が
-      // 上書きするので問題なし。
+      // を「字幕表示 ON」に上書き、5 秒後に hide_caption で fade-out して消す。
+      // overlay v0.3.9+ が hide_caption 受信時に 220ms の fade-out を実装済み（overlay 担当依頼1）。
       try { overlayState.port.postMessage({ type: 'show_caption', text: '字幕表示 ON', settings: buildOverlaySettings() }); } catch (_) {}
       if (_overlayReadyToastTimer) clearTimeout(_overlayReadyToastTimer);
       _overlayReadyToastTimer = setTimeout(() => {
         _overlayReadyToastTimer = null;
         if (!isOverlayConnected()) return;
-        try { overlayState.port.postMessage({ type: 'show_caption', text: '', settings: buildOverlaySettings() }); } catch (_) {}
-        // 直近の本文字幕があれば再フラッシュ
+        try { overlayState.port.postMessage({ type: 'hide_caption' }); } catch (_) {}
+        // 直近の本文字幕があれば再フラッシュ（show 受信で overlay 側が fading-out クラスを剥がして再表示）
         flushOverlayCaption();
-      }, 3000);
+      }, 5000);
       // 接続直後に保留中字幕があれば優先的に送信（3 秒トーストを上書きする）
       flushOverlayCaption();
       break;
