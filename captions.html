@@ -188,7 +188,6 @@
           <option value="3">3行</option>
           <option value="5">5行（履歴多め）</option>
         </select>
-        <small class="cap-hint">同時に表示する行数（最新 N 段落）。1 行だと最も大きく表示。</small>
       </div>
 
       <!-- v0.13.31: スクロールする行数（バッチサイズ）。
@@ -237,17 +236,10 @@
         </div>
       </div>
 
-      <div class="cap-field cap-field-row">
-        <label class="cap-toggle">
-          <input type="checkbox" id="cap-follow-live" checked />
-          <span>新しい発話で自動スクロール</span>
-        </label>
-      </div>
-
       <div class="cap-field cap-osd-section">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-osd-ai" />
-          <span>AIでOSD用に整形（TV字幕風）</span>
+          <span>AI字幕整形</span>
         </label>
         <small class="cap-hint">
           字幕バッファから表示行を読み込んで整形します。文字数はほぼ変えず、文節の途中改行であれば

@@ -40,7 +40,8 @@ const DEFAULT_SETTINGS = {
   paraCount: 2,
   // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
   scrollLineCount: 1,
-  followLive: true,
+  // v0.13.31: 旧 followLive（新しい発話で自動スクロール）はライブキャプションウィンドウ廃止に伴い撤去。
+  // 字幕表示はオーバーレイのみで、字幕窓（#cap-box）は使わないため意味がなくなった。
 
   // 配信モード（OBS向け）
   broadcastMode: false,
@@ -138,7 +139,7 @@ const els = {
   outLineHeight: document.getElementById('cap-lh-out'),
   inParaCount: document.getElementById('cap-para-count'),
   inScrollLineCount: document.getElementById('cap-scroll-line-count'),
-  inFollowLive: document.getElementById('cap-follow-live'),
+  // v0.13.31: inFollowLive は撤去（cap-follow-live 要素削除に伴う）。
   inBroadcast: document.getElementById('cap-broadcast-mode'),
   inKeyColor: document.getElementById('cap-key-color'),
   keyColorName: document.getElementById('cap-key-color-name'),
@@ -301,7 +302,7 @@ function reflectSettingsToUI() {
     els.inScrollLineCount.value = String(v);
     settings.scrollLineCount = v;
   }
-  els.inFollowLive.checked = settings.followLive;
+  // v0.13.31: inFollowLive 反映は撤去（要素削除に伴う）。
   if (els.inBroadcast) els.inBroadcast.checked = !!settings.broadcastMode;
   if (els.inKeyColor) els.inKeyColor.value = settings.keyColor;
   if (els.inOsdAi) els.inOsdAi.checked = !!settings.osdAi;
@@ -571,7 +572,7 @@ function bindSettingsUI() {
       renderLatest();
     });
   }
-  els.inFollowLive.addEventListener('change', () => { settings.followLive = els.inFollowLive.checked; commit(); });
+  // v0.13.31: inFollowLive バインドは撤去（要素削除に伴う）。
 
   // 配信モードトグル
   if (els.inBroadcast) {
@@ -944,12 +945,13 @@ function renderLatest() {
   if (settings.displayMode === 'stream' || settings.displayMode === 'flow') {
     streamIngestFromSession(session);
     renderStreamView();
-    if (settings.followLive) {
-      requestAnimationFrame(() => {
-        const sc = els.boxScroll;
-        if (sc) sc.scrollTop = sc.scrollHeight;
-      });
-    }
+    // v0.13.31: 旧 followLive ガード撤去（オーバーレイ運用で字幕窓は非表示なので
+    // boxScroll は実質 no-op だが、displayMode=stream/flow が将来再有効化された時のために
+    // 無条件スクロールに変更）。
+    requestAnimationFrame(() => {
+      const sc = els.boxScroll;
+      if (sc) sc.scrollTop = sc.scrollHeight;
+    });
     const updated = Number(session.updatedAt) || 0;
     const live = Date.now() - updated < 15000;
     setStatus(live ? 'listening' : 'idle', live ? '● 受信中' : '● 待機');
@@ -1072,12 +1074,11 @@ function renderLatest() {
     renderTextIntoBox(html);
   }
 
-  if (settings.followLive) {
-    requestAnimationFrame(() => {
-      const sc = els.boxScroll;
-      if (sc) sc.scrollTop = sc.scrollHeight;
-    });
-  }
+  // v0.13.31: 旧 followLive ガード撤去。
+  requestAnimationFrame(() => {
+    const sc = els.boxScroll;
+    if (sc) sc.scrollTop = sc.scrollHeight;
+  });
 
   const updated = Number(session.updatedAt) || 0;
   const live = Date.now() - updated < 15000;
@@ -1176,7 +1177,8 @@ function scheduleOsdAiRender(rawText) {
     const out = await formatOsdWithAi(rawText);
     if (settings.osdAi) {
       renderTextIntoBox(textToOsdHtml(out));
-      if (settings.followLive) {
+      // v0.13.31: 旧 followLive ガード撤去。
+      {
         requestAnimationFrame(() => {
           const sc = els.boxScroll;
           if (sc) sc.scrollTop = sc.scrollHeight;
