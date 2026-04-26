@@ -36,7 +36,11 @@ const DEFAULT_SETTINGS = {
   shadowBlur: 6,
   // v0.13.31: オーバーレイ背景の角丸（px）。0=直角〜32=丸め強。dictation-overlay v0.4+ で反映予定。
   borderRadius: 8,
-  lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため）
+  lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため、行間=line-height）
+  // v0.13.31: ブロック間隔（段落間 margin-bottom em x 10）。0=段落がぴったり詰まる。
+  blockGapTenth: 0,
+  // v0.13.31: AI 字幕整形のサブ設定。文節途中で改行する時「→」継続マークを付けるか。
+  osdContinuationMark: true,
   paraCount: 2,
   // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
   scrollLineCount: 1,
@@ -136,7 +140,14 @@ const els = {
   inBorderRadius: document.getElementById('cap-border-radius'),
   outBorderRadius: document.getElementById('cap-border-radius-out'),
   inLineHeight: document.getElementById('cap-line-height'),
-  outLineHeight: document.getElementById('cap-lh-out'),
+  // v0.13.31: 旧 output id="cap-lh-out" は、HTML 修正で id="cap-line-height-out" にリネーム済み
+  outLineHeight: document.getElementById('cap-line-height-out') || document.getElementById('cap-lh-out'),
+  // v0.13.31: ブロック間隔（旧「行間」位置の UI、リネーム）
+  inBlockGap: document.getElementById('cap-block-gap'),
+  outBlockGap: document.getElementById('cap-block-gap-out'),
+  // v0.13.31: AI 字幕整形のサブ設定（条件付きフィールド）
+  inOsdContinuationMark: document.getElementById('cap-osd-continuation-mark'),
+  osdAiOnlyFields: document.getElementById('cap-osd-ai-only-fields'),
   inParaCount: document.getElementById('cap-para-count'),
   inScrollLineCount: document.getElementById('cap-scroll-line-count'),
   // v0.13.31: inFollowLive は撤去（cap-follow-live 要素削除に伴う）。
@@ -179,6 +190,9 @@ function applySettings() {
   root.style.setProperty('--cap-font-color', settings.color);
   root.style.setProperty('--cap-bg-color', hexToRgba(settings.bgColor, settings.bgAlpha));
   root.style.setProperty('--cap-line-height', String(settings.lineHeightTenth / 10));
+  // v0.13.31: ブロック間隔（段落間 margin-bottom em）
+  const gapEm = (Number(settings.blockGapTenth) || 0) / 10;
+  root.style.setProperty('--cap-block-gap', gapEm + 'em');
 
   // シャドウ
   if (settings.shadowOn) {
@@ -294,6 +308,18 @@ function reflectSettingsToUI() {
   }
   els.inLineHeight.value = settings.lineHeightTenth;
   els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
+  // v0.13.31: ブロック間隔（範囲外は 0 にクランプ）
+  if (els.inBlockGap) {
+    let v = Number(settings.blockGapTenth ?? 0);
+    if (!Number.isFinite(v) || v < 0 || v > 25) v = 0;
+    els.inBlockGap.value = String(v);
+    settings.blockGapTenth = v;
+    if (els.outBlockGap) els.outBlockGap.textContent = (v / 10).toFixed(1);
+  }
+  // v0.13.31: AI 字幕整形サブ設定（→ 継続マーク）
+  if (els.inOsdContinuationMark) els.inOsdContinuationMark.checked = settings.osdContinuationMark !== false;
+  // v0.13.31: AI 字幕整形 ON/OFF に応じてサブ設定セクションの is-hidden をトグル
+  if (els.osdAiOnlyFields) els.osdAiOnlyFields.classList.toggle('is-hidden', !settings.osdAi);
   els.inParaCount.value = String(settings.paraCount);
   if (els.inScrollLineCount) {
     // v0.13.31: 範囲外（1〜3 以外）の旧値は 1 にフォールバック
@@ -553,6 +579,20 @@ function bindSettingsUI() {
       commit();
     });
   }
+  if (els.inBlockGap) {
+    els.inBlockGap.addEventListener('input', () => {
+      const v = Math.max(0, Math.min(25, Number(els.inBlockGap.value) || 0));
+      settings.blockGapTenth = v;
+      if (els.outBlockGap) els.outBlockGap.textContent = (v / 10).toFixed(1);
+      commit();
+    });
+  }
+  if (els.inOsdContinuationMark) {
+    els.inOsdContinuationMark.addEventListener('change', () => {
+      settings.osdContinuationMark = !!els.inOsdContinuationMark.checked;
+      commit();
+    });
+  }
   els.inLineHeight.addEventListener('input', () => {
     settings.lineHeightTenth = Number(els.inLineHeight.value);
     els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
@@ -623,6 +663,8 @@ function bindSettingsUI() {
   if (els.inOsdAi) {
     els.inOsdAi.addEventListener('change', () => {
       settings.osdAi = els.inOsdAi.checked;
+      // v0.13.31: サブ設定セクションの出入りアニメ（design-system C 準拠）
+      if (els.osdAiOnlyFields) els.osdAiOnlyFields.classList.toggle('is-hidden', !settings.osdAi);
       commit();
       renderLatest(); // 即反映
     });
@@ -787,7 +829,12 @@ async function formatOsdWithAi(rawText) {
 
   _osdAiCache.inFlight = true;
   try {
-    const out = await window.formatForOSDWithGemini({ apiKey, text: rawText });
+    const out = await window.formatForOSDWithGemini({
+      apiKey,
+      text: rawText,
+      // v0.13.31: 「文節途中の改行に → を追加」サブ設定。既定 true。
+      continuationMark: settings.osdContinuationMark !== false,
+    });
     _osdAiCache.inputHash = h;
     _osdAiCache.output = out || rawText;
     return _osdAiCache.output;
@@ -1264,6 +1311,9 @@ function buildOverlaySettings() {
     // v0.13.31: 角丸（px、0〜32）。dictation-overlay 側 v0.4+ で .caption の border-radius に反映予定。
     // 旧 overlay は未知フィールドを無視するので送って害なし（NATIVE_MESSAGING_SPEC §4.2 settings は任意）。
     borderRadius: Math.max(0, Math.min(32, Number(settings.borderRadius) || 0)),
+    // v0.13.31: ブロック間隔（段落間 margin-bottom em x 10、0〜25）。dictation-overlay 側で
+    // .caption の段落間に反映予定（依頼起票予定）。旧 overlay は未知フィールドを無視するので送って害なし。
+    blockGapTenth: Math.max(0, Math.min(25, Number(settings.blockGapTenth) || 0)),
   };
 }
 

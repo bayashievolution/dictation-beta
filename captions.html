@@ -174,8 +174,18 @@
         </div>
       </div>
 
+      <!-- v0.13.31: 旧「行間」スライダーは「ブロック間隔」（段落間 margin）にリネーム + 機能変更。
+           id も cap-line-height → cap-block-gap に変更。やっさん指示で「現状 1.0 でも広すぎる」
+           ため min=0 起点（段落がぴったり詰まる）から 2.5em まで広げられる範囲に変更。 -->
       <div class="cap-field">
-        <label class="cap-label">行間 <output id="cap-lh-out">1.4</output></label>
+        <label class="cap-label">ブロック間隔 <output id="cap-block-gap-out">0.0</output></label>
+        <input type="range" id="cap-block-gap" min="0" max="25" step="1" value="0" />
+      </div>
+
+      <!-- v0.13.31: 新設「行間」（line-height）。表示エリア内での自動改行の行間を調整。
+           ラベルとキーは既存の line-height を継承（lineHeightTenth はそのまま意味変えず使う）。 -->
+      <div class="cap-field">
+        <label class="cap-label">行間 <output id="cap-line-height-out">1.4</output></label>
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
       </div>
 
@@ -250,12 +260,17 @@
           <input type="checkbox" id="cap-osd-ai" />
           <span>AI字幕整形</span>
         </label>
-        <small class="cap-hint">
-          字幕バッファから表示行を読み込んで整形します。文字数はほぼ変えず、文節の途中改行であれば
-          「<strong>→</strong>」を追加。会話が進んだら文脈から話題を推測して整形に生かします
-          （あくまで文字起こしなので、飛躍した推測は行いません）。
-          更新のたびに Gemini を呼ぶので API 利用量が少し増えます（2〜3 秒に 1 回デバウンス）。
-        </small>
+        <small class="cap-hint">AIを使用し、文脈を考慮しながら誤字等を修正。</small>
+        <!-- v0.13.31: AI字幕整形 ON 時のサブ設定。design-system principles.md C
+             「条件フィールドは出入りアニメ」に従い、is-hidden クラスでアニメーション付き表示制御。 -->
+        <div class="cap-field-conditional is-hidden" id="cap-osd-ai-only-fields">
+          <div class="cap-field-conditional-inner">
+            <label class="cap-toggle cap-indent">
+              <input type="checkbox" id="cap-osd-continuation-mark" checked />
+              <span>文節途中の改行に「→」を追加</span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="cap-field">

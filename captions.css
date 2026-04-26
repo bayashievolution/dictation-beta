@@ -73,6 +73,8 @@ html.cap-settings-only #cap-settings .cap-settings-body::-webkit-scrollbar-corne
   --cap-font-color: #ffffff;
   --cap-bg-color: rgba(0, 0, 0, 0.7);
   --cap-line-height: 1.4;
+  /* v0.13.31: ブロック間隔（段落間 margin-bottom、em 単位）。0=段落がぴったり詰まる */
+  --cap-block-gap: 0em;
   --cap-text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
   --cap-stroke: none;
 }
@@ -165,7 +167,7 @@ body.cap-body {
   word-break: break-word;
   overflow-wrap: break-word;
 }
-#cap-box-text p { margin: 0 0 0.35em; }
+#cap-box-text p { margin: 0 0 var(--cap-block-gap, 0em); }
 #cap-box-text p:last-child { margin-bottom: 0; }
 #cap-box-text .cap-para.latest {
   /* 最新段落は不透明度MAX、過去段落はやや薄く */
@@ -669,6 +671,29 @@ body.broadcast-mode #cap-box-text {
   border-top: 1px solid var(--cap-border);
   margin: 12px 0;
   opacity: 0.6;
+}
+
+/* v0.13.31: 条件付きフィールド（design-system principles.md C 準拠の出入りアニメ）。
+ * grid-template-rows のトランジションで「スッ」と開閉、opacity と margin も連動。 */
+.cap-field-conditional {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 8px;
+  transition:
+    grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    margin-top 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.cap-field-conditional > .cap-field-conditional-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.cap-field-conditional.is-hidden {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
 }
 
 /* v0.13.31: 旧 .cap-overlay-toast はモーダル内トースト用に追加したが、
