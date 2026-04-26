@@ -200,7 +200,6 @@
           <option value="2">2行ずつ</option>
           <option value="3">3行ずつ</option>
         </select>
-        <small class="cap-hint">字幕バッファに何段落溜まったらスクロールするか。1 だとパッと替わらず、前の行を表示しつつ 1 行ずつ下から押し上がる演出。</small>
       </div>
 
       <div class="cap-field hidden" id="cap-stream-only-fields">
@@ -248,11 +247,13 @@
       <div class="cap-field cap-osd-section">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-osd-ai" />
-          <span><strong>AIでOSD用に整形（TV字幕風）</strong></span>
+          <span>AIでOSD用に整形（TV字幕風）</span>
         </label>
         <small class="cap-hint">
-          文節で改行、長い文は途中改行に「<strong>→</strong>」。見出しや「(文字起こし中…)」等を除去。
-          更新のたびに Gemini を呼ぶのでAPI利用量が少し増えます（2〜3秒に1回デバウンス）。
+          字幕バッファから表示行を読み込んで整形します。文字数はほぼ変えず、文節の途中改行であれば
+          「<strong>→</strong>」を追加。会話が進んだら文脈から話題を推測して整形に生かします
+          （あくまで文字起こしなので、飛躍した推測は行いません）。
+          更新のたびに Gemini を呼ぶので API 利用量が少し増えます（2〜3 秒に 1 回デバウンス）。
         </small>
       </div>
 

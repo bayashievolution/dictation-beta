@@ -987,13 +987,29 @@ function renderLatest() {
     }
 
     const latest = liveBuf.slice(-n);
-    const html = latest.map((slice, idx) => {
-      const isLast = idx === latest.length - 1;
-      const isNew = !_lastShownSliceTs.includes(slice.ts);
-      const cls = 'cap-para' + (isLast ? ' latest' : '') + (isNew ? ' enter' : '');
-      return `<p class="${cls}" data-slice-ts="${slice.ts}">${escapeHtml(String(slice.text || ''))}</p>`;
-    }).join('');
-    renderTextIntoBox(html);
+
+    if (settings.osdAi) {
+      // v0.13.31: 字幕バッファに対する AI OSD 整形（やっさん指示で動作復活）。
+      // 旧実装は transcript ベースでしか走っていなかったので、字幕バッファ完全分離後に
+      // 「動かない」状態になっていた。最新 N 件のスライスを結合して Gemini に渡し、
+      // 結果（文節改行 + → 継続マーク）を一括描画する。
+      // この経路ではスクロール演出（.enter）は使わず、整形済みテキストを丸ごと差替え。
+      const rawText = latest.map(s => String(s.text || '')).filter(Boolean).join('\n');
+      scheduleOsdAiRender(rawText);
+      const immediate = (_osdAiCache.output && _osdAiCache.inputHash === hashStr(rawText))
+        ? _osdAiCache.output
+        : rawText;
+      renderTextIntoBox(textToOsdHtml(immediate));
+    } else {
+      // 通常パス：slice ごとの段落 + スクロール演出
+      const html = latest.map((slice, idx) => {
+        const isLast = idx === latest.length - 1;
+        const isNew = !_lastShownSliceTs.includes(slice.ts);
+        const cls = 'cap-para' + (isLast ? ' latest' : '') + (isNew ? ' enter' : '');
+        return `<p class="${cls}" data-slice-ts="${slice.ts}">${escapeHtml(String(slice.text || ''))}</p>`;
+      }).join('');
+      renderTextIntoBox(html);
+    }
     _lastShownSliceTs = latest.map(s => Number(s.ts));
 
     const updated = Number(liveBuf[liveBuf.length - 1].ts) || 0;
