@@ -36,6 +36,10 @@ const DEFAULT_SETTINGS = {
   shadowBlur: 6,
   // v0.13.31: オーバーレイ背景の角丸（px）。0=直角〜32=丸め強。dictation-overlay v0.4+ で反映予定。
   borderRadius: 8,
+  // v0.13.31: 字幕背景のマージン（dictation-overlay .caption の padding、px）。
+  // 横（左右）・縦（上下）を別々に。dictation-overlay v0.4+ で反映予定。
+  paddingX: 24,
+  paddingY: 10,
   lineHeightTenth: 14,    // 1.4 を 14 で保持（range が整数のため、行間=line-height）
   // v0.13.31: ブロック間隔（段落間 margin-bottom em x 10）。0=段落がぴったり詰まる。
   blockGapTenth: 0,
@@ -139,6 +143,10 @@ const els = {
   outShadowBlur: document.getElementById('cap-shadow-blur-out'),
   inBorderRadius: document.getElementById('cap-border-radius'),
   outBorderRadius: document.getElementById('cap-border-radius-out'),
+  inPaddingX: document.getElementById('cap-padding-x'),
+  outPaddingX: document.getElementById('cap-padding-x-out'),
+  inPaddingY: document.getElementById('cap-padding-y'),
+  outPaddingY: document.getElementById('cap-padding-y-out'),
   inLineHeight: document.getElementById('cap-line-height'),
   // v0.13.31: 旧 output id="cap-lh-out" は、HTML 修正で id="cap-line-height-out" にリネーム済み
   outLineHeight: document.getElementById('cap-line-height-out') || document.getElementById('cap-lh-out'),
@@ -305,6 +313,20 @@ function reflectSettingsToUI() {
     els.inBorderRadius.value = String(v);
     els.outBorderRadius.textContent = v + 'px';
     settings.borderRadius = v;
+  }
+  if (els.inPaddingX) {
+    let v = Number(settings.paddingX ?? 24);
+    if (!Number.isFinite(v) || v < 0 || v > 60) v = 24;
+    els.inPaddingX.value = String(v);
+    if (els.outPaddingX) els.outPaddingX.textContent = v + 'px';
+    settings.paddingX = v;
+  }
+  if (els.inPaddingY) {
+    let v = Number(settings.paddingY ?? 10);
+    if (!Number.isFinite(v) || v < 0 || v > 40) v = 10;
+    els.inPaddingY.value = String(v);
+    if (els.outPaddingY) els.outPaddingY.textContent = v + 'px';
+    settings.paddingY = v;
   }
   els.inLineHeight.value = settings.lineHeightTenth;
   els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
@@ -576,6 +598,22 @@ function bindSettingsUI() {
       const v = Math.max(0, Math.min(32, Number(els.inBorderRadius.value) || 0));
       settings.borderRadius = v;
       els.outBorderRadius.textContent = v + 'px';
+      commit();
+    });
+  }
+  if (els.inPaddingX) {
+    els.inPaddingX.addEventListener('input', () => {
+      const v = Math.max(0, Math.min(60, Number(els.inPaddingX.value) || 0));
+      settings.paddingX = v;
+      if (els.outPaddingX) els.outPaddingX.textContent = v + 'px';
+      commit();
+    });
+  }
+  if (els.inPaddingY) {
+    els.inPaddingY.addEventListener('input', () => {
+      const v = Math.max(0, Math.min(40, Number(els.inPaddingY.value) || 0));
+      settings.paddingY = v;
+      if (els.outPaddingY) els.outPaddingY.textContent = v + 'px';
       commit();
     });
   }
@@ -1314,6 +1352,9 @@ function buildOverlaySettings() {
     // v0.13.31: ブロック間隔（段落間 margin-bottom em x 10、0〜25）。dictation-overlay 側で
     // .caption の段落間に反映予定（依頼起票予定）。旧 overlay は未知フィールドを無視するので送って害なし。
     blockGapTenth: Math.max(0, Math.min(25, Number(settings.blockGapTenth) || 0)),
+    // v0.13.31: 字幕背景のマージン（.caption の padding、px）。dictation-overlay v0.4+ で反映予定。
+    paddingX: Math.max(0, Math.min(60, Number(settings.paddingX) || 0)),
+    paddingY: Math.max(0, Math.min(40, Number(settings.paddingY) || 0)),
   };
 }
 

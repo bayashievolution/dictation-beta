@@ -150,6 +150,17 @@
         <input type="range" id="cap-border-radius" min="0" max="32" step="1" value="8" />
       </div>
 
+      <!-- v0.13.31: 字幕背景のマージン（dictation-overlay の .caption padding）。
+           横方向・縦方向を別々に調整。dictation-overlay 側 v0.4+ で反映予定（依頼起票予定）。 -->
+      <div class="cap-field">
+        <label class="cap-label">字幕背景のマージン（横） <output id="cap-padding-x-out">24px</output></label>
+        <input type="range" id="cap-padding-x" min="0" max="60" step="1" value="24" />
+      </div>
+      <div class="cap-field">
+        <label class="cap-label">字幕背景のマージン（縦） <output id="cap-padding-y-out">10px</output></label>
+        <input type="range" id="cap-padding-y" min="0" max="40" step="1" value="10" />
+      </div>
+
       <div class="cap-field">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-stroke-on" />
