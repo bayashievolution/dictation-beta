@@ -283,16 +283,8 @@
              「条件フィールドは出入りアニメ」に従い、is-hidden クラスでアニメーション付き表示制御。 -->
         <div class="cap-field-conditional is-hidden" id="cap-osd-ai-only-fields">
           <div class="cap-field-conditional-inner">
-            <label class="cap-label cap-indent" for="cap-osd-line-length">改行文字数（10〜100）</label>
-            <div class="cap-row cap-indent">
-              <div class="number-stepper">
-                <input type="number" id="cap-osd-line-length" min="10" max="100" step="1" value="30">
-                <div class="number-stepper-btns">
-                  <button class="number-stepper-btn" type="button" data-stepper-target="cap-osd-line-length" data-stepper-delta="1" tabindex="-1" title="増やす"><span data-icon="chevron-up"></span></button>
-                  <button class="number-stepper-btn" type="button" data-stepper-target="cap-osd-line-length" data-stepper-delta="-1" tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
-                </div>
-              </div>
-            </div>
+            <!-- v0.13.31: 改行文字数はメイン設定の「Web Speech 改行文字数」を流用するため、
+                 ここでは設定しない（やっさん指摘で重複撤去）。 -->
             <label class="cap-toggle cap-indent">
               <input type="checkbox" id="cap-osd-continuation-mark" checked />
               <span>文節途中の改行に「→」を追加</span>

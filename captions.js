@@ -45,8 +45,8 @@ const DEFAULT_SETTINGS = {
   blockGapTenth: 0,
   // v0.13.31: AI 字幕整形のサブ設定。文節途中で改行する時「→」継続マークを付けるか。
   osdContinuationMark: true,
-  // v0.13.31: AI 字幕整形の改行文字数（指定文字数で固定改行）。10〜100、既定 30。
-  osdLineLength: 30,
+  // v0.13.31: AI 字幕整形の改行文字数はメイン設定（dictation:settings の webspeechSliceChars）を
+  // 流用するため、captions 側では持たない（やっさん指摘で重複撤去）。
   paraCount: 2,
   // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
   scrollLineCount: 1,
@@ -157,7 +157,6 @@ const els = {
   outBlockGap: document.getElementById('cap-block-gap-out'),
   // v0.13.31: AI 字幕整形のサブ設定（条件付きフィールド）
   inOsdContinuationMark: document.getElementById('cap-osd-continuation-mark'),
-  inOsdLineLength: document.getElementById('cap-osd-line-length'),
   osdAiOnlyFields: document.getElementById('cap-osd-ai-only-fields'),
   inParaCount: document.getElementById('cap-para-count'),
   inScrollLineCount: document.getElementById('cap-scroll-line-count'),
@@ -343,13 +342,6 @@ function reflectSettingsToUI() {
   }
   // v0.13.31: AI 字幕整形サブ設定（→ 継続マーク）
   if (els.inOsdContinuationMark) els.inOsdContinuationMark.checked = settings.osdContinuationMark !== false;
-  // v0.13.31: AI 字幕整形の改行文字数（10〜100 にクランプ、既定 30）
-  if (els.inOsdLineLength) {
-    let v = Number(settings.osdLineLength ?? 30);
-    if (!Number.isFinite(v) || v < 10 || v > 100) v = 30;
-    els.inOsdLineLength.value = String(v);
-    settings.osdLineLength = v;
-  }
   // v0.13.31: AI 字幕整形 ON/OFF に応じてサブ設定セクションの is-hidden をトグル
   if (els.osdAiOnlyFields) els.osdAiOnlyFields.classList.toggle('is-hidden', !settings.osdAi);
   els.inParaCount.value = String(settings.paraCount);
@@ -641,13 +633,6 @@ function bindSettingsUI() {
       commit();
     });
   }
-  if (els.inOsdLineLength) {
-    els.inOsdLineLength.addEventListener('input', () => {
-      const v = Math.max(10, Math.min(100, Number(els.inOsdLineLength.value) || 30));
-      settings.osdLineLength = v;
-      commit();
-    });
-  }
   els.inLineHeight.addEventListener('input', () => {
     settings.lineHeightTenth = Number(els.inLineHeight.value);
     els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
@@ -884,13 +869,23 @@ async function formatOsdWithAi(rawText) {
 
   _osdAiCache.inFlight = true;
   try {
+    // v0.13.31: 改行文字数はメイン設定（dictation:settings の webspeechSliceChars）から読む。
+    // 字幕バッファに流す時の slice サイズと AI 整形の改行幅を一致させて、設定の重複を避ける。
+    let mainLineLength = 30;
+    try {
+      const raw = localStorage.getItem('dictation:settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        const n = Number(s && s.webspeechSliceChars);
+        if (Number.isFinite(n) && n >= 10 && n <= 100) mainLineLength = n;
+      }
+    } catch (_) { /* fallback to 30 */ }
     const out = await window.formatForOSDWithGemini({
       apiKey,
       text: rawText,
-      // v0.13.31: AI 字幕整形のサブ設定。
-      // - lineLength: 指定文字数で固定改行（10〜100、既定 30）
+      // - lineLength: メイン設定の Web Speech 改行文字数を流用
       // - continuationMark: 文節途中の改行に「→」を追加するか（既定 true）
-      lineLength: Math.max(10, Math.min(100, Number(settings.osdLineLength) || 30)),
+      lineLength: mainLineLength,
       continuationMark: settings.osdContinuationMark !== false,
     });
     _osdAiCache.inputHash = h;
