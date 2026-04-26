@@ -1549,7 +1549,7 @@ function updateOverlayUI() {
   const ctBtn = document.getElementById('cap-overlay-clickthrough');
   const monSel = document.getElementById('cap-overlay-monitor');
   const testBtn = document.getElementById('cap-overlay-test');
-  const connBtn = document.getElementById('cap-overlay-connect');
+  const toggleEl = document.getElementById('cap-overlay-toggle');
   const dlLink = document.getElementById('cap-overlay-install');
 
   if (stat) {
@@ -1574,8 +1574,9 @@ function updateOverlayUI() {
       stat.className = 'cap-overlay-status disconnected';
     }
   }
-  if (connBtn) {
-    connBtn.textContent = isOverlayConnected() ? '切断' : '接続';
+  if (toggleEl) {
+    // v0.13.31: トグル化（チェック=接続中）。状態変化は change イベントで処理。
+    toggleEl.checked = isOverlayConnected();
   }
   if (testBtn) {
     testBtn.disabled = !isOverlayConnected();
@@ -1619,11 +1620,11 @@ function bindOverlayBridge() {
     });
   }
 
-  // 設定パネル：接続/切断ボタン
-  const connBtn = document.getElementById('cap-overlay-connect');
-  if (connBtn) connBtn.addEventListener('click', () => {
-    if (isOverlayConnected()) disconnectOverlay();
-    else connectNativeOverlay({ userInitiated: true });
+  // v0.13.31: 設定パネル「字幕表示」トグル（旧「接続」ボタンの置き換え）
+  const toggleEl = document.getElementById('cap-overlay-toggle');
+  if (toggleEl) toggleEl.addEventListener('change', () => {
+    if (toggleEl.checked) connectNativeOverlay({ userInitiated: true });
+    else disconnectOverlay();
   });
 
   // テスト字幕

@@ -2,6 +2,27 @@
  * dictation — ライブ字幕（captions）ウィンドウ専用スタイル
  * 聴覚障害のある受講者向け。フォント・色・縁取り等は全てユーザー設定可能。
  */
+
+/* v0.13.31: settingsOnly モード（メイン画面の字幕モーダル内 iframe で使う時）。
+ * 字幕表示エリア・ツールバー・リサイズハンドルを隠して、設定パネルを常時最大化。
+ * 字幕表示はオーバーレイ側で行うので、このウィンドウは設定 UI と Native Messaging hub だけを担う。 */
+html.cap-settings-only #cap-canvas,
+html.cap-settings-only #cap-toolbar { display: none !important; }
+html.cap-settings-only body { background: var(--cap-ui, #1a1a1f); padding: 0; }
+html.cap-settings-only #cap-settings.cap-settings {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 100vh;
+  max-width: none;
+  transform: none;
+  border: none;
+  box-shadow: none;
+}
+html.cap-settings-only #cap-settings.cap-settings.hidden { display: block !important; }
+html.cap-settings-only #cap-settings .cap-settings-head { display: none; }
+html.cap-settings-only #cap-settings .cap-settings-body { padding: 16px; max-height: none; height: 100vh; overflow: auto; }
+
 :root {
   --cap-bg: #000;          /* 外枠背景（字幕以外の部分） */
   --cap-ui: #1a1a1f;

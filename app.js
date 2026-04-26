@@ -4806,23 +4806,33 @@ function closeOnboarding() {
 const btnOnboarding = document.getElementById('btn-onboarding');
 if (btnOnboarding) btnOnboarding.addEventListener('click', startOnboarding);
 
-/* ライブ字幕（OSD）ウィンドウを開く。
- * Chrome拡張の場合は chrome-extension://ID/captions.html、
- * 一般Webの場合は相対パス captions.html で開く。 */
+/* v0.13.31: 字幕設定モーダル。
+ * 旧仕様：別ウィンドウとして captions.html を開いて字幕表示+設定を兼ねる
+ * 新仕様：字幕表示はオーバーレイのみ、字幕アイコン押下でモーダル開く。
+ *         モーダル内に captions.html?settingsOnly=1 を iframe で埋め込み、
+ *         既存の Native Messaging 連携・設定 UI ロジックをそのまま流用する。 */
 const btnCaptions = document.getElementById('btn-captions');
-if (btnCaptions) {
+const captionsModal = document.getElementById('captions-modal');
+const captionsModalIframe = document.getElementById('captions-modal-iframe');
+if (btnCaptions && captionsModal && captionsModalIframe) {
+  btnCaptions.title = '字幕設定';
   btnCaptions.addEventListener('click', () => {
-    // 現在のセッションを先に保存しておかないと字幕側が古いまま表示
-    snapshotActiveToSession();
-    persistSessions();
-    const url = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
-      ? chrome.runtime.getURL('captions.html')
-      : 'captions.html';
-    // 別ウィンドウとして開く。ユーザーが手動で別モニタに移動できるよう、通常タブ扱い
-    const w = window.open(url, 'dictation-captions',
-      'popup=yes,width=960,height=540,resizable=yes,scrollbars=yes');
-    if (!w) {
-      alert('ポップアップがブロックされました。ブラウザのポップアップ許可を確認してください。');
+    // 現在のセッションを先に保存（iframe 内 captions.js が transcript フォールバックで読むことがある）
+    try { snapshotActiveToSession(); persistSessions(); } catch (_) {}
+    // 初回 or 切断後はロード、開いたままなら再ロードしない（state 維持）
+    const desiredSrc = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+      ? chrome.runtime.getURL('captions.html?settingsOnly=1')
+      : 'captions.html?settingsOnly=1';
+    if (!captionsModalIframe.src || captionsModalIframe.src.indexOf('captions.html') === -1) {
+      captionsModalIframe.src = desiredSrc;
+    }
+    captionsModal.classList.remove('hidden');
+  });
+  // 閉じる：data-dismiss / backdrop / .modal-close で発火
+  captionsModal.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && (t.closest('[data-dismiss]') || t.classList.contains('modal-backdrop'))) {
+      captionsModal.classList.add('hidden');
     }
   });
 }

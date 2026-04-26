@@ -342,6 +342,87 @@ CLAUDE.md「Webアプリ開発時の共通ルール」に既に書いてある�
 
 ---
 
+### 2026-04-26 v0.13.31 字幕設定モーダル新設（ライブキャプションウィンドウ廃止の第1段）
+
+**やっさん発の方針**：
+- ライブキャプションウィンドウ（別ウィンドウで開く captions.html）廃止、字幕表示は overlay のみ
+- メイン画面の字幕アイコン押下で字幕設定モーダル出現
+- 字幕モーダル最上部に「字幕表示」トグル（ON で overlay 接続）
+- アイコンはテーマに沿ったもの（既存の data-icon="captions" を流用）
+
+**やっさんは「一気にやりましょう、楽しみにしてます」と就寝前に発言**。Auto mode で
+完成形まで進める方針。CLAUDE.md「動かない状態で次の変更を重ねない」の精神で各段階
+で commit を刻む。
+
+**実装方針（時間効率優先：iframe 方式）**：
+
+captions.html / .js / .css を**物理削除せず**、`?settingsOnly=1` モードで iframe
+としてモーダル内に埋め込む。理由：
+- 既存の Native Messaging 連携（connectNative, port.postMessage, ハートビート、再接続）
+  が複雑で、app.js への移植は事故リスクが高い（v0.13.30 自滅事故と同じ構造になりかねない）
+- captions.html の設定 UI（フォント・色・行間・ストローク・影・角丸・配信モード・
+  AI OSD・トランジション・モニタ・ログ）が一式揃っており、再実装は時間とミスが多い
+- iframe で settingsOnly モードに切り替えるだけなら 1 行スクリプト + 数行 CSS で済む
+- ファイルの物理削除はやっさん起床後に確認してから（destructive な操作）
+
+**変更内容**：
+
+1. **captions.html**
+   - 「ネイティブオーバーレイ連携」セクション → ラベル「字幕表示」、最上部に移動
+   - 「接続/切断」ボタン → トグル（チェックボックス `#cap-overlay-toggle`）
+   - 旧位置のセクションを削除
+   - URL `?settingsOnly=1` 検知スクリプトを `<head>` 内に追加：
+     `document.documentElement.classList.add('cap-settings-only')`
+
+2. **captions.css**
+   - `html.cap-settings-only` 配下のセレクタで `#cap-canvas`、`#cap-toolbar` を非表示
+   - `#cap-settings` をフルスクリーン化（position:static、height:100vh）
+   - `.cap-settings-head`（タイトルバー）を非表示（モーダルの header と二重になるため）
+
+3. **captions.js**
+   - `cap-overlay-connect` ボタン参照削除、`cap-overlay-toggle` チェックボックス対応
+   - `connBtn.textContent = 接続/切断` → `toggleEl.checked = isOverlayConnected()`
+   - `change` イベントで接続/切断
+
+4. **index.html**
+   - `#captions-modal` を新設（既存の設定モーダル `#settings-modal` と同じパターン）
+   - `<iframe id="captions-modal-iframe">` を `.modal-body-iframe` 内に配置
+   - `btn-captions` の title を「字幕設定」に変更
+
+5. **style.css**
+   - `.modal-captions` クラス（モーダルカードの寸法、80vh / 720px max）
+   - `.modal-body-iframe`（padding 0、display flex で iframe を全領域に伸ばす）
+
+6. **app.js**
+   - `btn-captions` の click ハンドラを書き換え：別ウィンドウを開く → モーダル開く
+   - 初回 or 未ロード時のみ iframe.src をセット（state 維持のため再ロードは避ける）
+   - `data-dismiss` / `.modal-backdrop` / `.modal-close` で閉じる
+
+**動作の流れ**：
+
+```
+[字幕アイコン押下]
+  → captions-modal を unhide
+  → iframe.src = chrome-extension://ID/captions.html?settingsOnly=1
+  → captions.html がロード（cap-settings-only クラス付与）
+  → 字幕表示エリア・ツールバー非表示、設定パネルを全画面化
+  → captions.js が起動、Native Messaging 接続準備完了
+  → ユーザーが「字幕表示」トグル ON
+    → connectNativeOverlay() → overlay と接続
+    → app.js から localStorage の dictation:liveCaption が更新される
+    → captions.js が storage event で受信、port.postMessage(show_caption) で overlay へ
+[字幕アイコン再押下 or × ボタン]
+  → captions-modal を hide（iframe は state 維持、再表示時は素早い）
+```
+
+**残作業（やっさん起床後の確認待ち）**：
+- captions.html / .js / .css の物理削除可否
+- メイン画面 #cap-app（録音中の字幕表示？）等の関連参照整理
+- dictation-overlay の borderRadius 対応待ち
+- スクロール演出（v0.13.31 caf807f 実装分）の overlay 反映依頼
+
+---
+
 ### 2026-04-26 v0.13.31 オーバーレイ背景の角丸（borderRadius）設定追加
 
 やっさん発「オーバーレイの背景の角丸のアールを変更可能に」。

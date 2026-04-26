@@ -10,6 +10,20 @@
   <link rel="stylesheet" href="captions.css?v=0.13.29" />
 </head>
 <body class="cap-body">
+  <!-- v0.13.31: settingsOnly モード（iframe 埋め込み時）。
+       URL に ?settingsOnly=1 が付いていたら、字幕表示エリア・ツールバーを隠して
+       設定パネルだけを常時表示する。captions.html を「設定 + Native Messaging hub」
+       として再利用（メイン画面の字幕モーダル内 iframe で使う想定）。 -->
+  <script>
+    (function () {
+      try {
+        var p = new URLSearchParams(location.search);
+        if (p.get('settingsOnly') === '1') {
+          document.documentElement.classList.add('cap-settings-only');
+        }
+      } catch (e) { /* no-op */ }
+    })();
+  </script>
   <div id="cap-canvas">
     <div id="cap-box" class="cap-box">
       <!-- スクロールする内側ラッパ。リサイズハンドルはこの外（cap-box直下）に置いて
@@ -47,6 +61,35 @@
       <button id="cap-settings-close" class="cap-tool-btn">×</button>
     </div>
     <div class="cap-settings-body">
+
+      <!-- v0.13.31: 「字幕表示」トグルを設定モーダルの最上部に。
+           ON で dictation-overlay に接続＝字幕オーバーレイが画面に出る。
+           OFF で切断＝オーバーレイ消える。やっさん指示で「字幕の見える/見えない」のトグル化。 -->
+      <div class="cap-field cap-overlay-section">
+        <label class="cap-toggle cap-overlay-toggle">
+          <input type="checkbox" id="cap-overlay-toggle" />
+          <span><strong>🪟 字幕表示</strong>（ON でネイティブオーバーレイに字幕を流す）</span>
+        </label>
+        <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
+        <div class="cap-row cap-indent">
+          <button id="cap-overlay-test" class="cap-btn-ghost" disabled>テスト字幕送信</button>
+        </div>
+        <label class="cap-toggle cap-indent">
+          <input type="checkbox" id="cap-overlay-clickthrough" checked disabled />
+          <span>クリックスルー（位置調整したい時はOFFに）</span>
+        </label>
+        <div class="cap-row cap-indent">
+          <label class="cap-inline">表示モニタ</label>
+          <select id="cap-overlay-monitor" disabled>
+            <option value="">（未接続）</option>
+          </select>
+        </div>
+        <small class="cap-hint">
+          OSレベルの透過字幕（ネイティブヘルパー <strong>dictation-overlay</strong>）と連携します。
+          ZoomやMeet・他アプリの上に直接字幕が乗ります。
+          初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。
+        </small>
+      </div>
 
       <div class="cap-field">
         <label class="cap-label">フォントサイズ <output id="cap-font-size-out">64px</output></label>
@@ -224,30 +267,6 @@
           <option value="slide-left">左からスライド</option>
           <option value="scroll">下からスクロール</option>
         </select>
-      </div>
-
-      <div class="cap-field cap-overlay-section">
-        <label class="cap-label"><strong>🪟 ネイティブオーバーレイ連携</strong></label>
-        <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
-        <div class="cap-row cap-indent">
-          <button id="cap-overlay-connect" class="cap-btn-ghost">接続</button>
-          <button id="cap-overlay-test" class="cap-btn-ghost" disabled>テスト字幕送信</button>
-        </div>
-        <label class="cap-toggle cap-indent">
-          <input type="checkbox" id="cap-overlay-clickthrough" checked disabled />
-          <span>クリックスルー（位置調整したい時はOFFに）</span>
-        </label>
-        <div class="cap-row cap-indent">
-          <label class="cap-inline">表示モニタ</label>
-          <select id="cap-overlay-monitor" disabled>
-            <option value="">（未接続）</option>
-          </select>
-        </div>
-        <small class="cap-hint">
-          OSレベルの透過字幕（ネイティブヘルパー <strong>dictation-overlay</strong>）と連携します。
-          ZoomやMeet・他アプリの上に直接字幕が乗ります。
-          初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。
-        </small>
       </div>
 
       <div class="cap-field cap-broadcast-section">

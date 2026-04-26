@@ -47,7 +47,7 @@
       <button id="btn-settings" class="btn btn-ghost btn-square" title="設定">
         <span class="btn-icon" data-icon="settings"></span>
       </button>
-      <button id="btn-captions" class="btn btn-ghost btn-square" title="ライブ字幕を別ウィンドウで開く（聴覚障害のある方向け・大画面表示）">
+      <button id="btn-captions" class="btn btn-ghost btn-square" title="字幕設定">
         <span class="btn-icon" data-icon="captions"></span>
       </button>
       <button id="btn-onboarding" class="btn btn-ghost btn-square" title="使い方ガイド">
@@ -523,6 +523,23 @@
       <div class="modal-footer">
         <button id="btn-settings-save" class="btn btn-primary">保存</button>
         <button class="btn btn-ghost" data-dismiss>キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v0.13.31: 字幕設定モーダル。
+       ライブキャプションウィンドウ廃止に伴い、設定 UI 一式を本モーダル内に集約。
+       実体は captions.html?settingsOnly=1 を iframe で読み込み（既存の captions.js
+       のロジック・Native Messaging 連携をそのまま流用するため）。 -->
+  <div id="captions-modal" class="modal hidden">
+    <div class="modal-backdrop" data-dismiss></div>
+    <div class="modal-card modal-wide modal-captions">
+      <div class="modal-header">
+        <h2>字幕設定</h2>
+        <button class="modal-close" data-dismiss><span data-icon="x"></span></button>
+      </div>
+      <div class="modal-body modal-body-iframe">
+        <iframe id="captions-modal-iframe" title="字幕設定"></iframe>
       </div>
     </div>
   </div>
