@@ -2563,9 +2563,9 @@ mark.search-hit.current {
   font-weight: 600;
 }
 
-.field-row input[type="checkbox"],
+/* v0.13.31: ラジオは従来通り、チェックボックスはトグルスイッチ風に統一。
+ * やっさん指示で「全てのチェックボックスをトグルスイッチに変更」。 */
 .field-row input[type="radio"],
-.field input[type="checkbox"],
 .field input[type="radio"] {
   width: 16px;
   height: 16px;
@@ -2577,6 +2577,59 @@ mark.search-hit.current {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* チェックボックス → トグルスイッチ風（design-system 準拠）。
+ * <input type="checkbox"> のまま見た目だけ変える（appearance:none + ::before で knob 描画）。 */
+.field-row input[type="checkbox"],
+.field input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 36px;
+  height: 20px;
+  min-width: 36px;
+  min-height: 20px;
+  flex: 0 0 36px;
+  background: var(--bg-subtle, #2a2a32);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  outline: none;
+  vertical-align: middle;
+}
+.field-row input[type="checkbox"]::before,
+.field input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.18s, background 0.18s;
+}
+.field-row input[type="checkbox"]:hover,
+.field input[type="checkbox"]:hover { border-color: var(--accent); }
+.field-row input[type="checkbox"]:checked,
+.field input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.field-row input[type="checkbox"]:checked::before,
+.field input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
+  background: #ffffff;
+}
+.field-row input[type="checkbox"]:disabled,
+.field input[type="checkbox"]:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .field-label {

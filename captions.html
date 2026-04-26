@@ -53,34 +53,41 @@
     </div>
     <div class="cap-settings-body">
 
-      <!-- v0.13.31: 「字幕表示」トグルを設定モーダルの最上部に。
-           ON で dictation-overlay に接続＝字幕オーバーレイが画面に出る。
-           OFF で切断＝オーバーレイ消える。やっさん指示で「字幕の見える/見えない」のトグル化。 -->
-      <div class="cap-field cap-overlay-section">
-        <label class="cap-toggle cap-overlay-toggle">
+      <!-- v0.13.31: 字幕表示セクション（design-system 準拠の通常スタイル）。
+           破線枠と緑色は撤去、トグルスイッチに統一、ラベルだけ「字幕表示」に短縮。 -->
+      <div class="cap-field">
+        <label class="cap-toggle">
           <input type="checkbox" id="cap-overlay-toggle" />
-          <span><strong>🪟 字幕表示</strong>（ON でネイティブオーバーレイに字幕を流す）</span>
+          <span>字幕表示</span>
         </label>
-        <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
-        <div class="cap-row cap-indent">
-          <button id="cap-overlay-test" class="cap-btn-ghost" disabled>テスト字幕送信</button>
-        </div>
-        <label class="cap-toggle cap-indent">
-          <input type="checkbox" id="cap-overlay-clickthrough" checked disabled />
-          <span>クリックスルー（位置調整したい時はOFFに）</span>
-        </label>
-        <div class="cap-row cap-indent">
-          <label class="cap-inline">表示モニタ</label>
-          <select id="cap-overlay-monitor" disabled>
-            <option value="">（未接続）</option>
-          </select>
-        </div>
         <small class="cap-hint">
-          OSレベルの透過字幕（ネイティブヘルパー <strong>dictation-overlay</strong>）と連携します。
           ZoomやMeet・他アプリの上に直接字幕が乗ります。
-          初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。
+          初回のみ <a href="#" id="cap-overlay-install">インストーラ</a> が必要です。（Windows のみ対応）
         </small>
       </div>
+
+      <div class="cap-field">
+        <label class="cap-toggle">
+          <input type="checkbox" id="cap-overlay-clickthrough" checked disabled />
+          <span>字幕位置を固定</span>
+        </label>
+        <small class="cap-hint">OFF にするとオーバーレイをドラッグして位置調整できます。</small>
+      </div>
+
+      <div class="cap-field">
+        <label class="cap-label">表示モニタ</label>
+        <select id="cap-overlay-monitor" disabled>
+          <option value="">（未接続）</option>
+        </select>
+      </div>
+
+      <!-- 接続情報のログウィンドウ -->
+      <div class="cap-field">
+        <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
+      </div>
+
+      <!-- 区切り線（次セクション=フォントサイズへ） -->
+      <hr class="cap-separator" />
 
       <div class="cap-field">
         <label class="cap-label">フォントサイズ <output id="cap-font-size-out">64px</output></label>

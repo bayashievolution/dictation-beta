@@ -357,12 +357,54 @@ select:focus { border-color: var(--cap-accent); }
 .cap-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   font-size: 13px;
   user-select: none;
 }
-.cap-toggle input[type="checkbox"] { accent-color: var(--cap-accent); width: 16px; height: 16px; cursor: pointer; }
+/* v0.13.31: チェックボックス → トグルスイッチ風（design-system 準拠）。
+ * やっさん指示で全チェックボックスをトグルスイッチに統一。
+ * <input type="checkbox"> をそのまま使えるよう appearance:none + ::before の擬似要素で knob を描く。 */
+.cap-toggle input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 36px;
+  height: 20px;
+  background: var(--cap-ui-soft);
+  border: 1px solid var(--cap-border);
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+  flex-shrink: 0;
+  margin: 0;
+  vertical-align: middle;
+  outline: none;
+}
+.cap-toggle input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--cap-text-muted);
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.18s, background 0.18s;
+}
+.cap-toggle input[type="checkbox"]:hover { border-color: var(--cap-accent); }
+.cap-toggle input[type="checkbox"]:checked {
+  background: var(--cap-accent);
+  border-color: var(--cap-accent);
+}
+.cap-toggle input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
+  background: #ffffff;
+}
+.cap-toggle input[type="checkbox"]:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 .cap-btn-ghost {
   background: transparent;
@@ -616,12 +658,19 @@ body.broadcast-mode #cap-box-text {
   box-shadow: 0 0 4px var(--cap-accent);
 }
 
-.cap-overlay-section {
-  border: 1px dashed var(--cap-border);
-  border-radius: 6px;
-  padding: 10px 8px;
-  background: rgba(52, 211, 153, 0.04);
+/* v0.13.31: 旧 cap-overlay-section の破線枠と緑色背景を撤去（やっさん指示）。
+ * 通常の cap-field と同じスタイルにするため、特別な装飾は持たない。
+ * 過去のクラス参照が残っていても無害になるよう空ルールで残置。 */
+.cap-overlay-section {}
+
+/* v0.13.31: 区切り線（design-system 風、薄い 1px ライン） */
+.cap-separator {
+  border: 0;
+  border-top: 1px solid var(--cap-border);
+  margin: 12px 0;
+  opacity: 0.6;
 }
+
 .cap-overlay-status {
   font-size: 12px;
   padding: 6px 10px;
