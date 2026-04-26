@@ -273,7 +273,9 @@
         </div>
       </div>
 
-      <div class="cap-field cap-osd-section">
+      <!-- v0.13.31: AI 字幕整形は途中でエラーで消える/「→」判定が不安定なバグあり。
+           やっさん指示で一旦非表示。後でバグ取りする。機能本体は残置（osdAi=false が既定）。 -->
+      <div class="cap-field cap-osd-section hidden">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-osd-ai" />
           <span>AI字幕整形</span>
