@@ -291,9 +291,9 @@
           <label class="field">
             <span class="field-label">Gemini API キー</span>
             <input id="input-api-key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false" />
-            <small class="field-hint">
-              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で取得。無料枠内で運用できます。
-            </small>
+            <span class="field-hint">
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で取得（無料枠内で運用できます）
+            </span>
           </label>
           <label class="field field-row">
             <input id="input-ai-enabled" type="checkbox" />
@@ -308,7 +308,7 @@
                 <button type="button" class="number-stepper-btn" data-stepper-target="input-silence-sec" data-stepper-delta="-1" tabindex="-1"><span data-icon="chevron-down"></span></button>
               </div>
             </div>
-            <small class="field-hint">この秒数だけ静かになったら、溜めた発話を Gemini に送って整形する</small>
+            <small class="field-hint">無音状態が設定した秒数継続したら、発話を Gemini に送って整形</small>
           </label>
           <label class="field field-row">
             <input id="input-auto-summarize" type="checkbox" />
@@ -496,7 +496,7 @@
                 </div>
               </div><span class="unit">px</span>
             </div>
-            <small class="field-hint">Google Fonts から日本語フォントを読み込んでいます（要ネット接続）</small>
+            <small class="field-hint">Google Fonts から日本語フォントを読み込み（要ネット接続）</small>
           </div>
         </div>
 
