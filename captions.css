@@ -684,6 +684,74 @@ body.broadcast-mode #cap-box-text {
   margin: 16px 0 8px;
 }
 
+/* v0.13.31: number-stepper（design-system 準拠）。iframe 内 captions.html でも使うため移植。
+ * style.css の .number-stepper 一式と同等。 */
+.number-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--cap-border);
+  border-radius: 4px;
+  background: var(--cap-ui-soft);
+  overflow: hidden;
+  transition: border-color 0.15s;
+  flex-shrink: 0;
+}
+.number-stepper:hover { border-color: #4a4a54; }
+.number-stepper:focus-within { border-color: var(--cap-accent); }
+.number-stepper input[type="number"] {
+  width: 56px;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  color: var(--cap-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.number-stepper input[type="number"]::-webkit-inner-spin-button,
+.number-stepper input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.number-stepper-btns {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--cap-border);
+  width: 18px;
+}
+.number-stepper-btn {
+  flex: 1 1 50%;
+  background: transparent;
+  border: none;
+  color: var(--cap-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+}
+.number-stepper-btn [data-icon] svg {
+  width: 10px;
+  height: 10px;
+}
+.number-stepper-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cap-text);
+}
+.number-stepper-btn:active {
+  background: rgba(52, 211, 153, 0.18);
+  color: var(--cap-accent);
+}
+.number-stepper-btn + .number-stepper-btn {
+  border-top: 1px solid var(--cap-border);
+}
+/* v0.13.31: icons.js が <span data-icon="..."> の中に SVG を挿入する。
+ * captions.html 側で icons.js を読み込み、captions.js で renderIcons() を呼ぶ。 */
+
 /* v0.13.31: 条件付きフィールド（design-system principles.md C 準拠の出入りアニメ）。
  * grid-template-rows のトランジションで「スッ」と開閉、opacity と margin も連動。 */
 .cap-field-conditional {

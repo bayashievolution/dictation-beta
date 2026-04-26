@@ -45,6 +45,8 @@ const DEFAULT_SETTINGS = {
   blockGapTenth: 0,
   // v0.13.31: AI 字幕整形のサブ設定。文節途中で改行する時「→」継続マークを付けるか。
   osdContinuationMark: true,
+  // v0.13.31: AI 字幕整形の改行文字数（指定文字数で固定改行）。10〜100、既定 30。
+  osdLineLength: 30,
   paraCount: 2,
   // v0.13.31: スクロールする行数（バッチサイズ）。1=1段落ずつ流れる、N=N段落溜まってから一気にN行流す。
   scrollLineCount: 1,
@@ -155,6 +157,7 @@ const els = {
   outBlockGap: document.getElementById('cap-block-gap-out'),
   // v0.13.31: AI 字幕整形のサブ設定（条件付きフィールド）
   inOsdContinuationMark: document.getElementById('cap-osd-continuation-mark'),
+  inOsdLineLength: document.getElementById('cap-osd-line-length'),
   osdAiOnlyFields: document.getElementById('cap-osd-ai-only-fields'),
   inParaCount: document.getElementById('cap-para-count'),
   inScrollLineCount: document.getElementById('cap-scroll-line-count'),
@@ -340,6 +343,13 @@ function reflectSettingsToUI() {
   }
   // v0.13.31: AI 字幕整形サブ設定（→ 継続マーク）
   if (els.inOsdContinuationMark) els.inOsdContinuationMark.checked = settings.osdContinuationMark !== false;
+  // v0.13.31: AI 字幕整形の改行文字数（10〜100 にクランプ、既定 30）
+  if (els.inOsdLineLength) {
+    let v = Number(settings.osdLineLength ?? 30);
+    if (!Number.isFinite(v) || v < 10 || v > 100) v = 30;
+    els.inOsdLineLength.value = String(v);
+    settings.osdLineLength = v;
+  }
   // v0.13.31: AI 字幕整形 ON/OFF に応じてサブ設定セクションの is-hidden をトグル
   if (els.osdAiOnlyFields) els.osdAiOnlyFields.classList.toggle('is-hidden', !settings.osdAi);
   els.inParaCount.value = String(settings.paraCount);
@@ -631,6 +641,13 @@ function bindSettingsUI() {
       commit();
     });
   }
+  if (els.inOsdLineLength) {
+    els.inOsdLineLength.addEventListener('input', () => {
+      const v = Math.max(10, Math.min(100, Number(els.inOsdLineLength.value) || 30));
+      settings.osdLineLength = v;
+      commit();
+    });
+  }
   els.inLineHeight.addEventListener('input', () => {
     settings.lineHeightTenth = Number(els.inLineHeight.value);
     els.outLineHeight.textContent = (settings.lineHeightTenth / 10).toFixed(1);
@@ -870,7 +887,10 @@ async function formatOsdWithAi(rawText) {
     const out = await window.formatForOSDWithGemini({
       apiKey,
       text: rawText,
-      // v0.13.31: 「文節途中の改行に → を追加」サブ設定。既定 true。
+      // v0.13.31: AI 字幕整形のサブ設定。
+      // - lineLength: 指定文字数で固定改行（10〜100、既定 30）
+      // - continuationMark: 文節途中の改行に「→」を追加するか（既定 true）
+      lineLength: Math.max(10, Math.min(100, Number(settings.osdLineLength) || 30)),
       continuationMark: settings.osdContinuationMark !== false,
     });
     _osdAiCache.inputHash = h;
@@ -1798,9 +1818,38 @@ function bindOverlayBridge() {
   updateOverlayUI();
 }
 
+/* v0.13.31: number-stepper のクリックハンドラ（app.js wireNumberSteppers と同等の移植）。
+ * iframe（captions.html）内の <button class="number-stepper-btn"> 用。 */
+function wireCapNumberSteppers() {
+  document.querySelectorAll('.number-stepper-btn[data-stepper-target]').forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetId = btn.dataset.stepperTarget;
+      const delta = Number(btn.dataset.stepperDelta) || 0;
+      const input = document.getElementById(targetId);
+      if (!input) return;
+      const step = Number(input.step) || 1;
+      const current = Number(input.value) || Number(input.min) || 0;
+      const min = input.min !== '' ? Number(input.min) : -Infinity;
+      const max = input.max !== '' ? Number(input.max) : Infinity;
+      const next = Math.max(min, Math.min(max, current + delta * step));
+      if (next === current) return;
+      input.value = next;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+}
+
 /* ───────── init ───────── */
 
 function init() {
+  // v0.13.31: icons.js による SVG 挿入（chevron-up/down 等）。
+  // 続けて number-stepper のクリックハンドラも wire（captions 内独自実装）。
+  if (typeof window.renderIcons === 'function') window.renderIcons();
+  wireCapNumberSteppers();
   reflectSettingsToUI();
   applySettings();
   applyBox();
