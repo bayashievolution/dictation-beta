@@ -673,6 +673,17 @@ body.broadcast-mode #cap-box-text {
   opacity: 0.6;
 }
 
+/* v0.13.31: セクション見出し（design-system principles.md 準拠の uppercase + letter-spacing）。
+ * 「字幕」「字幕背景」のようにグループタイトルとして使う。 */
+.cap-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--cap-text-muted);
+  text-transform: uppercase;
+  margin: 16px 0 8px;
+}
+
 /* v0.13.31: 条件付きフィールド（design-system principles.md C 準拠の出入りアニメ）。
  * grid-template-rows のトランジションで「スッ」と開閉、opacity と margin も連動。 */
 .cap-field-conditional {

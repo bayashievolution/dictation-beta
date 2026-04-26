@@ -95,8 +95,11 @@
         <div id="cap-overlay-status" class="cap-overlay-status disconnected">未接続</div>
       </div>
 
-      <!-- 区切り線（次セクション=フォントサイズへ） -->
+      <!-- 区切り線（次セクション=「字幕」へ） -->
       <hr class="cap-separator" />
+
+      <!-- v0.13.31: やっさん指示の順番変更で「字幕」セクション。 -->
+      <h3 class="cap-section-title">字幕</h3>
 
       <div class="cap-field">
         <label class="cap-label">フォントサイズ <output id="cap-font-size-out">64px</output></label>
@@ -104,7 +107,7 @@
       </div>
 
       <div class="cap-field">
-        <label class="cap-label">フォント種類</label>
+        <label class="cap-label">フォント</label>
         <select id="cap-font-family">
           <option value="'Noto Sans JP', sans-serif">ゴシック (Noto Sans JP)</option>
           <option value="'M PLUS 1p', sans-serif">丸ゴ (M PLUS 1p)</option>
@@ -136,32 +139,6 @@
       </div>
 
       <div class="cap-field">
-        <label class="cap-label">背景色 <output id="cap-bg-alpha-out">70%</output></label>
-        <div class="cap-row">
-          <input type="color" id="cap-bg-color" value="#000000" />
-          <input type="range" id="cap-bg-alpha" min="0" max="100" step="5" value="70" />
-        </div>
-      </div>
-
-      <!-- v0.13.31: オーバーレイ背景の角丸（border-radius）。
-           ラベルは「字幕背景の角を丸く」（やっさん指示でリネーム）、説明文は撤去。 -->
-      <div class="cap-field">
-        <label class="cap-label">字幕背景の角を丸く <output id="cap-border-radius-out">8px</output></label>
-        <input type="range" id="cap-border-radius" min="0" max="32" step="1" value="8" />
-      </div>
-
-      <!-- v0.13.31: 字幕背景のマージン（dictation-overlay の .caption padding）。
-           横方向・縦方向を別々に調整。dictation-overlay 側 v0.4+ で反映予定（依頼起票予定）。 -->
-      <div class="cap-field">
-        <label class="cap-label">字幕背景のマージン（横） <output id="cap-padding-x-out">24px</output></label>
-        <input type="range" id="cap-padding-x" min="0" max="60" step="1" value="24" />
-      </div>
-      <div class="cap-field">
-        <label class="cap-label">字幕背景のマージン（縦） <output id="cap-padding-y-out">10px</output></label>
-        <input type="range" id="cap-padding-y" min="0" max="40" step="1" value="10" />
-      </div>
-
-      <div class="cap-field">
         <label class="cap-toggle">
           <input type="checkbox" id="cap-stroke-on" />
           <span>縁取り</span>
@@ -185,19 +162,47 @@
         </div>
       </div>
 
-      <!-- v0.13.31: 旧「行間」スライダーは「ブロック間隔」（段落間 margin）にリネーム + 機能変更。
-           id も cap-line-height → cap-block-gap に変更。やっさん指示で「現状 1.0 でも広すぎる」
-           ため min=0 起点（段落がぴったり詰まる）から 2.5em まで広げられる範囲に変更。 -->
-      <div class="cap-field">
-        <label class="cap-label">ブロック間隔 <output id="cap-block-gap-out">0.0</output></label>
-        <input type="range" id="cap-block-gap" min="0" max="25" step="1" value="0" />
-      </div>
-
-      <!-- v0.13.31: 新設「行間」（line-height）。表示エリア内での自動改行の行間を調整。
-           ラベルとキーは既存の line-height を継承（lineHeightTenth はそのまま意味変えず使う）。 -->
+      <!-- v0.13.31: 「行間」（line-height）。表示エリア内での自動改行の行間。 -->
       <div class="cap-field">
         <label class="cap-label">行間 <output id="cap-line-height-out">1.4</output></label>
         <input type="range" id="cap-line-height" min="10" max="25" step="1" value="14" />
+      </div>
+
+      <!-- v0.13.31: やっさん指示の「字幕背景」セクション。 -->
+      <h3 class="cap-section-title">字幕背景</h3>
+
+      <div class="cap-field">
+        <label class="cap-label">背景色 <output id="cap-bg-alpha-out">70%</output></label>
+        <div class="cap-row">
+          <input type="color" id="cap-bg-color" value="#000000" />
+          <input type="range" id="cap-bg-alpha" min="0" max="100" step="5" value="70" />
+        </div>
+      </div>
+
+      <!-- v0.13.31: オーバーレイ背景の角丸。やっさん指示で「字幕」プレフィックス削除。 -->
+      <div class="cap-field">
+        <label class="cap-label">背景の角を丸く <output id="cap-border-radius-out">8px</output></label>
+        <input type="range" id="cap-border-radius" min="0" max="32" step="1" value="8" />
+      </div>
+
+      <!-- v0.13.31: 字幕背景の padding。やっさん指示で「マージン」→「パディング」にリネーム。 -->
+      <div class="cap-field">
+        <label class="cap-label">パディング（横） <output id="cap-padding-x-out">24px</output></label>
+        <input type="range" id="cap-padding-x" min="0" max="60" step="1" value="24" />
+      </div>
+      <div class="cap-field">
+        <label class="cap-label">パディング(縦) <output id="cap-padding-y-out">10px</output></label>
+        <input type="range" id="cap-padding-y" min="0" max="40" step="1" value="10" />
+      </div>
+
+      <!-- 区切り線（字幕背景セクション後） -->
+      <hr class="cap-separator" />
+
+      <!-- v0.13.31: 旧「行間」スライダーは「ブロック間隔」（段落間 margin）にリネーム + 機能変更。
+           「字幕」セクションには含めず、区切り線後に配置（やっさん指示の構造に従う）。 -->
+      <div class="cap-field">
+        <label class="cap-label">ブロック間隔 <output id="cap-block-gap-out">0.0</output></label>
+        <input type="range" id="cap-block-gap" min="0" max="25" step="1" value="0" />
       </div>
 
       <!-- v0.13.31: 字幕表示モードセレクトはやっさん指示で UI 非表示。

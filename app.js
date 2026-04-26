@@ -4713,6 +4713,11 @@ const ONBOARDING_STEPS = [
     title: '設定',
     text: 'Gemini API キー、フォント・サイズ、要約の詳細度、音声入力モード（Web Speech / Gemini Audio）などをここで調整します。',
   },
+  {
+    target: '#btn-captions',
+    title: '字幕設定',
+    text: 'OS レベルの透過字幕オーバーレイ（ネイティブヘルパー dictation-overlay と連携）。Zoom や Meet・他アプリの上に直接字幕が乗ります。フォント・色・縁取り・影・背景・パディング・行間・改行ルール・AI整形などをここで調整。**Windows 専用**で、初回のみインストーラが必要です。',
+  },
 ];
 
 let onboardingIdx = 0;
