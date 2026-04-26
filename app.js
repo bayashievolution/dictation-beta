@@ -4032,8 +4032,10 @@ function createSession({ activate = true, title = null, skipSave = false } = {})
   renderTabs();
   if (activate) {
     loadActiveSessionIntoDOM();
-    // 新規タブを画面内に収めるよう自動スクロール
-    requestAnimationFrame(scrollActiveTabIntoView);
+    // v0.13.31: 新規タブは末尾に追加されるので、scrollWidth まで一発で行けば必ず見える。
+    // 旧 scrollActiveTabIntoView は新規 DOM のレイアウト前に getBoundingClientRect を取って
+    // 「最新タブの手前で止まる」事故が起きていた（やっさん指摘）。
+    scrollTabsToEnd();
   }
   return session;
 }
@@ -4525,6 +4527,23 @@ function scrollActiveTabIntoView() {
   } else if (tRect.right > cRect.right - margin) {
     scrollEl.scrollBy({ left: tRect.right - cRect.right + margin, behavior: 'smooth' });
   }
+}
+
+/** v0.13.31: タブを新規追加した時、末尾まで確実にスクロールする。
+ * 新規タブの DOM レイアウト完了が requestAnimationFrame 1 回では間に合わず、
+ * scrollActiveTabIntoView の getBoundingClientRect が古い値を返すケースがあった
+ * （やっさん指摘「最新のタブの手前で止まる」）。
+ * scrollWidth まで一発で行けば、新規タブは必ず末尾なので確実に見える。
+ * double RAF + scrollWidth で「DOM レイアウト後の最終位置」へジャンプ。 */
+function scrollTabsToEnd() {
+  const scrollEl = document.getElementById('tabs');
+  if (!scrollEl) return;
+  // double RAF で DOM レイアウトが確実に完了してから scrollWidth を取得
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scrollEl.scrollTo({ left: scrollEl.scrollWidth, behavior: 'smooth' });
+    });
+  });
 }
 
 function reorderSessions(newIds) {
