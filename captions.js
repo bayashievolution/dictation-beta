@@ -1270,26 +1270,9 @@ function buildOverlaySettings() {
 /** ユーザーがボタンを押して開始した接続かどうか（失敗時のアラート表示判定用）*/
 let _overlayUserInitiated = false;
 
-/** v0.13.31: 直前の接続状態（updateOverlayUI で「未接続→接続中」遷移を検知してトーストを出す） */
-let _wasOverlayConnected = false;
-let _overlayToastTimer = null;
-
-/** v0.13.31: トースト「字幕表示 ON」を 3 秒だけ表示する */
-function showOverlayToast(text) {
-  const toast = document.getElementById('cap-overlay-toast');
-  if (!toast) return;
-  toast.textContent = text;
-  // 一旦クラスを外して animation をリスタート（連続呼び出しに耐える）
-  toast.classList.remove('show');
-  // 強制リフロー（次フレーム実行でも可だが、確実性のため getBoundingClientRect で）
-  void toast.offsetWidth;
-  toast.classList.add('show');
-  if (_overlayToastTimer) clearTimeout(_overlayToastTimer);
-  _overlayToastTimer = setTimeout(() => {
-    toast.classList.remove('show');
-    _overlayToastTimer = null;
-  }, 3000);
-}
+/** v0.13.31: オーバーレイ側に「字幕表示 ON」を 3 秒だけ表示するためのタイマー。
+ * dictation-overlay の起動時ハードコード「dictation-overlay ready」を上書きする目的。 */
+let _overlayReadyToastTimer = null;
 
 function connectNativeOverlay(opts = {}) {
   if (opts.userInitiated) _overlayUserInitiated = true;
@@ -1372,7 +1355,20 @@ function handleNativeMessage(msg) {
         try { overlayState.port.postMessage({ type: 'list_monitors' }); } catch (e) { console.warn('list_monitors send failed', e); }
       }
       updateOverlayUI();
-      // 直近の字幕を即時送信
+      // v0.13.31: オーバーレイ側のハードコード初期テキスト「dictation-overlay ready」
+      // を「字幕表示 ON」に上書き、3 秒後に空テキストで消す（ふんわりは overlay 側の
+      // CSS transition に任せる）。3 秒経つ前に実字幕が来たら flushOverlayCaption が
+      // 上書きするので問題なし。
+      try { overlayState.port.postMessage({ type: 'show_caption', text: '字幕表示 ON', settings: buildOverlaySettings() }); } catch (_) {}
+      if (_overlayReadyToastTimer) clearTimeout(_overlayReadyToastTimer);
+      _overlayReadyToastTimer = setTimeout(() => {
+        _overlayReadyToastTimer = null;
+        if (!isOverlayConnected()) return;
+        try { overlayState.port.postMessage({ type: 'show_caption', text: '', settings: buildOverlaySettings() }); } catch (_) {}
+        // 直近の本文字幕があれば再フラッシュ
+        flushOverlayCaption();
+      }, 3000);
+      // 接続直後に保留中字幕があれば優先的に送信（3 秒トーストを上書きする）
       flushOverlayCaption();
       break;
     case 'pong':
@@ -1598,14 +1594,6 @@ function updateOverlayUI() {
   const testToggleEl = document.getElementById('cap-overlay-test-toggle');
   const toggleEl = document.getElementById('cap-overlay-toggle');
   const dlLink = document.getElementById('cap-overlay-install');
-
-  // v0.13.31: 「未接続→接続中」に切り替わったタイミングを検知して
-  // 「字幕表示 ON」トーストを 3 秒だけ出す。
-  const isNowConnected = isOverlayConnected();
-  if (isNowConnected && !_wasOverlayConnected) {
-    showOverlayToast('字幕表示 ON');
-  }
-  _wasOverlayConnected = isNowConnected;
 
   if (stat) {
     if (isOverlayConnected()) {
