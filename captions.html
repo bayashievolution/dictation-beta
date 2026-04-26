@@ -7,42 +7,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;900&family=Noto+Serif+JP:wght@400;600;700&family=M+PLUS+1p:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Kosugi+Maru&family=Sawarabi+Gothic&family=Shippori+Mincho:wght@400;600;700&family=Klee+One:wght@400;600&family=Yomogi&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
-  <!-- v0.13.31: settingsOnly モード（iframe 埋め込み時）。
-       URL に ?settingsOnly=1 が付いていたら、字幕表示エリア・ツールバーを隠して
-       設定パネルだけを常時表示する。captions.html を「設定 + Native Messaging hub」
-       として再利用（メイン画面の字幕モーダル内 iframe で使う想定）。
-       <head> 内で評価することで、CSS 適用の最初のサイクルから cap-settings-only
-       クラスが効くようにする（FOUC 防止）。
-       さらに保険として、外部 CSS が効かない場合に備えて inline style を直接注入する。 -->
-  <script>
-    (function () {
-      try {
-        var p = new URLSearchParams(location.search);
-        if (p.get('settingsOnly') === '1') {
-          document.documentElement.classList.add('cap-settings-only');
-          // 外部 CSS（captions.css）が読み込まれなかったり優先度負けする状況に備えて、
-          // 必要最小限の hide スタイルを inline で注入する（最強の保険）。
-          var s = document.createElement('style');
-          s.textContent = [
-            '#cap-canvas, #cap-toolbar { display: none !important; }',
-            '#cap-settings.cap-settings, #cap-settings.cap-settings.hidden {',
-            '  position: static !important; display: block !important;',
-            '  width: 100% !important; height: 100vh !important; max-width: none !important;',
-            '  transform: none !important; border: none !important; box-shadow: none !important;',
-            '  visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;',
-            '}',
-            '#cap-settings .cap-settings-head { display: none !important; }',
-            '#cap-settings .cap-settings-body {',
-            '  padding: 16px !important; max-height: none !important;',
-            '  height: 100vh !important; overflow: auto !important;',
-            '}',
-            'body { margin: 0 !important; padding: 0 !important; }'
-          ].join('\n');
-          document.head.appendChild(s);
-        }
-      } catch (e) { /* no-op */ }
-    })();
-  </script>
+  <!-- v0.13.31: settingsOnly モード（iframe 埋め込み時）の早期初期化。
+       URL ?settingsOnly=1 検知 → cap-settings-only クラス付与 + inline 保険スタイル。
+       CSP（manifest.json の script-src 'self'）が inline script を禁止しているため
+       外部 JS として読み込む。必ず <link rel="stylesheet"> より前で評価する。 -->
+  <script src="captions-bootstrap.js"></script>
   <link rel="stylesheet" href="captions.css?v=0.13.31" />
 </head>
 <body class="cap-body">
