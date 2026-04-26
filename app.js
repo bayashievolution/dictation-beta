@@ -4821,13 +4821,16 @@ if (btnCaptions && captionsModal && captionsModalIframe) {
   const captionsBaseUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
     ? chrome.runtime.getURL('captions.html')
     : 'captions.html';
+  const captionsModalSrc = captionsBaseUrl + '?settingsOnly=1';
   btnCaptions.addEventListener('click', () => {
     // 現在のセッションを先に保存（iframe 内 captions.js が transcript フォールバックで読むことがある）
     try { snapshotActiveToSession(); persistSessions(); } catch (_) {}
-    // 毎回ユニーク URL（_t=Date.now()）でブラウザキャッシュを完全に回避し、必ず settingsOnly モードで起動。
-    // state 維持は諦める（モーダル開くたびに captions.html が再ロードされる）が、
-    // 設定値は localStorage、Native Messaging 接続も再 connect で復帰するので実用上問題なし。
-    captionsModalIframe.src = captionsBaseUrl + '?settingsOnly=1&_t=' + Date.now();
+    // src が違っていれば（旧 URL or 未セット）必ず読み直す。同じならそのまま（state 維持＝
+    // Native Messaging 接続を切らない）。CSP 対策の captions-bootstrap.js が外部 JS で
+    // 確実に実行されるため、キャッシュバスターは不要になった。
+    if (captionsModalIframe.src !== captionsModalSrc) {
+      captionsModalIframe.src = captionsModalSrc;
+    }
     captionsModal.classList.remove('hidden');
   });
   // 閉じる：data-dismiss / backdrop / .modal-close で発火
