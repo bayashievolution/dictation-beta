@@ -297,11 +297,22 @@
           </label>
           <label class="field field-row">
             <input id="input-ai-enabled" type="checkbox" />
-            <span>AI整形を有効にする</span>
+            <span>リアルタイムAI文字起こし整形</span>
+          </label>
+          <label class="field">
+            <span class="field-label">リアルタイムAI文字起こし整形のタイミング（秒）</span>
+            <div class="number-stepper">
+              <input id="input-silence-sec" type="number" min="1" max="30" step="1" />
+              <div class="number-stepper-btns">
+                <button type="button" class="number-stepper-btn" data-stepper-target="input-silence-sec" data-stepper-delta="1" tabindex="-1"><span data-icon="chevron-up"></span></button>
+                <button type="button" class="number-stepper-btn" data-stepper-target="input-silence-sec" data-stepper-delta="-1" tabindex="-1"><span data-icon="chevron-down"></span></button>
+              </div>
+            </div>
+            <small class="field-hint">この秒数だけ静かになったら、溜めた発話を Gemini に送って整形する</small>
           </label>
           <label class="field field-row">
             <input id="input-auto-summarize" type="checkbox" />
-            <span>録音停止時に要約とタイトルを自動生成する</span>
+            <span>録音停止時にAI要約・タイトル生成</span>
           </label>
           <div class="field">
             <span class="field-label">要約の詳しさ</span>
@@ -335,7 +346,7 @@
             <small class="field-hint" style="margin-top:8px;display:block">
               Zoom/Meet の音声を取り込むには
               <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener">VB-Cable</a>
-              などの仮想オーディオケーブルをインストール。
+              などの仮想オーディオケーブルをインストール
             </small>
           </div>
           <div class="field-conditional is-hidden" id="webspeech-only-fields">
@@ -351,7 +362,7 @@
                   <option value="8">8</option>
                   <option value="10">10</option>
                 </select>
-                <small class="field-hint">N 秒ごとに「ここまで」と区切って字幕／オーバーレイに送る。話し手のリズムに合わせて調整。長文喋りでドカっと出るのを防ぐ。</small>
+                <small class="field-hint">文字起こしを下書きから確定するまでの時間</small>
               </label>
 
               <!-- v0.13.31: ここから下は字幕／オーバーレイ用設定。文字起こしペインは触らない。
@@ -365,7 +376,7 @@
                    ↑↓ は design-system principles.md「ネイティブ装飾は appearance:none」に従い、
                    汎用 .number-stepper（wireNumberSteppers）を使う。 -->
               <label class="field">
-                <span class="field-label">Web Speech 改行文字数（10〜100）</span>
+                <span class="field-label">字幕一行あたりの最大文字数（10〜100）</span>
                 <div class="number-stepper">
                   <input type="number" id="input-webspeech-slice-chars" min="10" max="100" step="1" value="30">
                   <div class="number-stepper-btns">
@@ -373,7 +384,7 @@
                     <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-slice-chars" data-stepper-delta="-1" tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
                   </div>
                 </div>
-                <small class="field-hint">interim が指定文字数に達した時点で改行（新段落として字幕に流す）。Web Speech は止めないので、ブロック間の言葉が失われない。話者のリズム・読みやすさで調整（既定 30）。</small>
+                <small class="field-hint">文字起こしの下書きがこの字数になると字幕エリアに表示される。話者のリズム・読みやすさで調整（既定 30）</small>
               </label>
 
               <!-- v0.13.31: 無音 stop。30 字に達しない短い発話を、
@@ -382,7 +393,7 @@
                    v0.13.30 の誤発火（喋り中も onresult が空く問題）は起きない。
                    0=OFF。 -->
               <label class="field">
-                <span class="field-label">Web Speech 無音 stop（秒、0=OFF）</span>
+                <span class="field-label">強制字幕表示時間（秒、0=OFF）</span>
                 <div class="number-stepper">
                   <input type="number" id="input-webspeech-silence-stop-sec" min="0" max="10" step="1" value="3">
                   <div class="number-stepper-btns">
@@ -390,7 +401,7 @@
                     <button class="number-stepper-btn" type="button" data-stepper-target="input-webspeech-silence-stop-sec" data-stepper-delta="-1" tabindex="-1" title="減らす"><span data-icon="chevron-down"></span></button>
                   </div>
                 </div>
-                <small class="field-hint">interim の中身が N 秒変化しなかったら（=本当に喋りが止まったら）強制 final 化して字幕に流す。改行文字数に達しない短い発話の取りこぼし防止。0 で OFF。</small>
+                <small class="field-hint">文字起こしの下書きが指定文字数に足りず、無言の場合、強制的に字幕エリアに表示するまでの時間。0 で OFF</small>
               </label>
             </div>
           </div>
@@ -427,18 +438,7 @@
         </div>
 
         <div class="field-group">
-          <h3 class="field-group-title">動作</h3>
-          <label class="field">
-            <span class="field-label">無音検出時間（秒）</span>
-            <div class="number-stepper">
-              <input id="input-silence-sec" type="number" min="1" max="30" step="1" />
-              <div class="number-stepper-btns">
-                <button type="button" class="number-stepper-btn" data-stepper-target="input-silence-sec" data-stepper-delta="1" tabindex="-1"><span data-icon="chevron-up"></span></button>
-                <button type="button" class="number-stepper-btn" data-stepper-target="input-silence-sec" data-stepper-delta="-1" tabindex="-1"><span data-icon="chevron-down"></span></button>
-              </div>
-            </div>
-            <small class="field-hint">この秒数だけ静かになったら、溜めた発話を Gemini に送って整形します。</small>
-          </label>
+          <h3 class="field-group-title">停止条件</h3>
           <label class="field field-row">
             <input id="input-auto-stop" type="checkbox" />
             <span>長時間無音で停止確認ダイアログを出す</span>

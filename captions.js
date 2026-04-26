@@ -241,14 +241,14 @@ function updateKeyColorName() {
   els.keyColorName.textContent = names[c] || 'カスタム';
 }
 
-/** 配信モードONを押した瞬間に、OBS向けの最適プリセットを適用 */
+/** 配信モードONを押した瞬間に、OBS向けの最適プリセットを適用。
+ * v0.13.31: 縁取り強制 OFF を撤去（やっさん指示「OBSモードにすると縁取りがキャンセルされる」）。
+ * 縁取りはユーザーが必要に応じて手動 ON/OFF できる。 */
 function applyBroadcastPreset() {
   // シャドウ=純黒・厚めに
   settings.shadowOn = true;
   settings.shadowColor = '#000000';
   settings.shadowBlur = Math.max(settings.shadowBlur, 8);
-  // 縁取り=OFF（キー抜け不良になりやすいので）
-  settings.strokeOn = false;
   // 文字色が暗い色なら白に寄せる（キー色マゼンタとの対比）
   const color = (settings.color || '').toLowerCase();
   if (color === '#000000' || color === settings.keyColor.toLowerCase()) {
@@ -1367,7 +1367,9 @@ function buildOverlaySettings() {
     shadowOn: !!settings.shadowOn,
     shadowColor: settings.shadowColor,
     shadowBlur: Number(settings.shadowBlur) || 0,
-    strokeOn: !!settings.strokeOn && !settings.broadcastMode,
+    // v0.13.31: broadcastMode で強制 false にしていた処理を撤去（やっさん指示）。
+    // ユーザー設定通り送る。
+    strokeOn: !!settings.strokeOn,
     strokeColor: settings.strokeColor,
     strokeWidth: Number(settings.strokeWidth) || 2,
     lineHeightTenth: Number(settings.lineHeightTenth) || 14,
